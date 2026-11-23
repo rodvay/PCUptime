@@ -13,6 +13,7 @@
   <img src="https://img.shields.io/badge/Size-82%20KB%20Single%20EXE-34D399?style=for-the-badge" alt="82 KB Single EXE" />
   <img src="https://img.shields.io/badge/Languages-EN%20%7C%20TR%20%7C%20%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-F59E0B?style=for-the-badge" alt="English, Turkish and Simplified Chinese" />
   <img src="https://img.shields.io/badge/License-MIT-38BDF8?style=for-the-badge" alt="MIT License" />
+  <a href="https://linux.do"><img src="https://img.shields.io/badge/Community-LINUX%20DO-1C1C1E?style=for-the-badge&logo=linux&logoColor=F59E0B" alt="LINUX DO Community" /></a>
 </p>
 
 <p align="center">
@@ -138,6 +139,12 @@ build.bat
 - **İndirme:** En güncel `PCUptime.exe` dosyasını **[Releases](https://github.com/rodvay/PCUptime/releases/latest)** sayfasından indirebilirsiniz.
 
 > 简体中文完整文档请查看 **[README.zh-CN.md](README.zh-CN.md)**。
+
+---
+
+## Community & Links
+
+- Friendly community link & discussion: **[LINUX DO](https://linux.do)** — Thank you to the LINUX DO open-source community for the feedback and support!
 
 ---
 

@@ -13,6 +13,7 @@
   <img src="https://img.shields.io/badge/体积-82%20KB%20单文件%20EXE-34D399?style=for-the-badge" alt="82 KB 单文件 EXE" />
   <img src="https://img.shields.io/badge/界面语言-简体中文%20%7C%20EN%20%7C%20TR-F59E0B?style=for-the-badge" alt="简体中文 英语 土耳其语" />
   <img src="https://img.shields.io/badge/开源协议-MIT-38BDF8?style=for-the-badge" alt="MIT 开源协议" />
+  <a href="https://linux.do"><img src="https://img.shields.io/badge/开源社区-LINUX%20DO-1C1C1E?style=for-the-badge&logo=linux&logoColor=F59E0B" alt="LINUX DO 社区" /></a>
 </p>
 
 <p align="center">
@@ -101,6 +102,10 @@ git clone https://github.com/rodvay/PCUptime.git
 cd PCUptime
 build.bat
 ```
+
+## 社区与友情链接
+
+- 感谢 **[LINUX DO](https://linux.do)** 社区的开源分享氛围与各位佬友的支持与反馈！
 
 ## 开源协议
 
