@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("PC Uptime & Power Cost")]
 [assembly: AssemblyDescription("Lightweight Windows utility showing live system uptime, detected hardware specs, and estimated electricity cost (EN/TR/zh-CN).")]
 [assembly: AssemblyProduct("PCUptime")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.3.1.0")]
+[assembly: AssemblyFileVersion("1.3.1.0")]
 
 namespace PCUptime
 {
@@ -28,6 +28,9 @@ namespace PCUptime
         public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
         public const int DWMWA_CAPTION_COLOR = 35;
         public const int DWMWA_TEXT_COLOR = 36;
+        public const uint MSGFLT_ALLOW = 1;
+        public static readonly IntPtr HWND_BROADCAST = new IntPtr(0xFFFF);
+        public static readonly uint WM_SHOW_EXISTING = RegisterWindowMessage("PCUptime_ShowExistingWindow_v1");
 
         public static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new IntPtr(-4);
 
@@ -37,6 +40,17 @@ namespace PCUptime
         [DllImport("kernel32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool QueryUnbiasedInterruptTime(out ulong unbiasedTime);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern uint RegisterWindowMessage(string lpString);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool ChangeWindowMessageFilterEx(IntPtr hWnd, uint msg, uint action, IntPtr pChangeFilterStruct);
 
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -895,8 +909,25 @@ namespace PCUptime
         private readonly TextBox _txtCustomWatts;
         private readonly CheckBox _chkMonitors;
         private readonly Label _lblError;
+        private readonly List<Font> _ownedFonts = new List<Font>();
         private string _selectedKey;
         private bool _suppressCustomReset;
+
+        private Font TrackFont(Font f)
+        {
+            _ownedFonts.Add(f);
+            return f;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                foreach (Font f in _ownedFonts) { try { f.Dispose(); } catch { } }
+                _ownedFonts.Clear();
+            }
+            base.Dispose(disposing);
+        }
 
         public double ResultPrice { get; private set; }
         public string ResultTariffKey { get; private set; }
@@ -925,7 +956,7 @@ namespace PCUptime
             StartPosition = FormStartPosition.CenterParent;
             BackColor = ColBg;
             ForeColor = ColText;
-            Font = new Font(fontName, 9f, FontStyle.Regular);
+            Font = TrackFont(new Font(fontName, 9f, FontStyle.Regular));
 
             SuspendLayout();
             AutoScaleDimensions = new SizeF(96f, 96f);
@@ -1032,7 +1063,7 @@ namespace PCUptime
                 current.T("Optional: enter a real watt-meter reading.", "Wattmetre ölçümünüz varsa girebilirsiniz.", "可选：如有功率计实测数据可直接填入。"),
                 ColMuted,
                 new Point(132, 299));
-            lblWattHint.Font = new Font(fontName, 8.2f);
+            lblWattHint.Font = TrackFont(new Font(fontName, 8.2f));
             Controls.Add(lblWattHint);
 
             _chkMonitors = new CheckBox();
@@ -1045,7 +1076,7 @@ namespace PCUptime
             Controls.Add(_chkMonitors);
 
             _lblError = MakeLabel("", ColRed, new Point(18, 360));
-            _lblError.Font = new Font(fontName, 8.3f);
+            _lblError.Font = TrackFont(new Font(fontName, 8.3f));
             _lblError.AutoSize = false;
             _lblError.Size = new Size(358, 20);
             Controls.Add(_lblError);
@@ -1112,7 +1143,7 @@ namespace PCUptime
             btn.FlatAppearance.BorderColor = ColBorder;
             btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(38, 46, 58);
             btn.Cursor = Cursors.Hand;
-            btn.Font = new Font(fontName, 8.2f, FontStyle.Bold);
+            btn.Font = TrackFont(new Font(fontName, 8.2f, FontStyle.Bold));
             return btn;
         }
 
@@ -1261,7 +1292,7 @@ namespace PCUptime
         private readonly Icon _appIcon;
         private readonly UserSettings _settings;
 
-        private HardwareInfo _hardware;
+        private volatile HardwareInfo _hardware;
         private float _scale = 1.0f;
         private TimeSpan _uptime;
         private TimeSpan _awakeTime;
@@ -1464,6 +1495,14 @@ namespace PCUptime
         {
             base.OnHandleCreated(e);
             NativeMethods.ApplyDarkTitleBar(Handle, ColBg, ColTextPrimary);
+            try
+            {
+                if (NativeMethods.WM_SHOW_EXISTING != 0)
+                    NativeMethods.ChangeWindowMessageFilterEx(Handle, NativeMethods.WM_SHOW_EXISTING, NativeMethods.MSGFLT_ALLOW, IntPtr.Zero);
+            }
+            catch
+            {
+            }
 
             try
             {
@@ -1481,10 +1520,16 @@ namespace PCUptime
             catch
             {
             }
+            Invalidate();
         }
 
         protected override void WndProc(ref Message m)
         {
+            if (NativeMethods.WM_SHOW_EXISTING != 0 && (uint)m.Msg == NativeMethods.WM_SHOW_EXISTING)
+            {
+                RestoreFromTray();
+                return;
+            }
             if (m.Msg == NativeMethods.WM_DPICHANGED)
             {
                 int newDpi = (int)(m.WParam.ToInt64() & 0xFFFF);
@@ -1872,7 +1917,11 @@ namespace PCUptime
         {
             Show();
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            bool wasTop = TopMost;
+            if (!wasTop) TopMost = true;
+            BringToFront();
             Activate();
+            if (!wasTop) TopMost = false;
             _trayIcon.Visible = false;
             RefreshUptimeData(false);
             Invalidate();
@@ -2534,10 +2583,40 @@ namespace PCUptime
         [STAThread]
         private static void Main(string[] args)
         {
-            NativeMethods.EnableDpiAwareness();
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new UptimeForm(LaunchOptions.Parse(args)));
+            LaunchOptions opt = LaunchOptions.Parse(args);
+            Mutex singleInstanceMutex = null;
+            if (!opt.DemoMode)
+            {
+                bool createdNew;
+                singleInstanceMutex = new Mutex(true, "Local\\PCUptime_SingleInstance_v1", out createdNew);
+                if (!createdNew)
+                {
+                    try
+                    {
+                        if (NativeMethods.WM_SHOW_EXISTING != 0)
+                            NativeMethods.PostMessage(NativeMethods.HWND_BROADCAST, NativeMethods.WM_SHOW_EXISTING, IntPtr.Zero, IntPtr.Zero);
+                    }
+                    catch { }
+                    singleInstanceMutex.Dispose();
+                    return;
+                }
+            }
+
+            try
+            {
+                NativeMethods.EnableDpiAwareness();
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                Application.Run(new UptimeForm(opt));
+            }
+            finally
+            {
+                if (singleInstanceMutex != null)
+                {
+                    try { singleInstanceMutex.ReleaseMutex(); } catch { }
+                    singleInstanceMutex.Dispose();
+                }
+            }
         }
     }
 }
