@@ -14,10 +14,10 @@ using System.Threading;
 using System.Windows.Forms;
 
 [assembly: AssemblyTitle("PC Uptime & Power Cost")]
-[assembly: AssemblyDescription("Lightweight Windows utility showing live system uptime, detected hardware specs, and estimated electricity cost.")]
+[assembly: AssemblyDescription("Lightweight Windows utility showing live system uptime, detected hardware specs, and estimated electricity cost (EN/TR/zh-CN).")]
 [assembly: AssemblyProduct("PCUptime")]
-[assembly: AssemblyVersion("1.2.0.0")]
-[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
 
 namespace PCUptime
 {
@@ -139,7 +139,7 @@ namespace PCUptime
                 else if (a == "--lang" && i + 1 < args.Length)
                 {
                     string l = (args[++i] ?? "").Trim().ToLowerInvariant();
-                    if (l == "tr" || l == "en")
+                    if (l == "tr" || l == "en" || l == "zh")
                         opt.ForceLang = l;
                 }
                 else if (a == "--preset" && i + 1 < args.Length)
@@ -158,41 +158,45 @@ namespace PCUptime
 
     internal sealed class UserSettings
     {
-        // Turkey EPDK 2026 residential tariffs (taxes included: energy + distribution + 5% BTV + 10% VAT)
+        // Turkey EPDK 2026 residential tariffs (tax incl.: energy + distribution + 5% BTV + 10% VAT)
         public const double TariffTrLow = 3.24;
         public const double TariffTrMixed = 4.05;
         public const double TariffTrHigh = 4.86;
+
+        // China State Grid residential tiered tariffs (中国居民阶梯电价, national representative CNY/kWh)
+        public const double TariffCnTier1 = 0.55;
+        public const double TariffCnTier2 = 0.60;
+        public const double TariffCnTier3 = 0.85;
 
         // Global average residential benchmarks
         public const double TariffUsAvg = 0.17;
         public const double TariffEuAvg = 0.29;
         public const double TariffUkAvg = 0.28;
 
-        public string Language;      // "tr" or "en"
+        public string Language;      // "tr", "en", "zh"
         public double PricePerKwh;
-        public string TariffKey;     // "tr_low", "tr_mixed", "tr_high", "us_avg", "eu_avg", "uk_avg", "custom"
-        public string CurrencyCode;  // "TL", "USD", "EUR", "GBP"
+        public string TariffKey;     // "tr_low", "tr_mixed", "tr_high", "cn_t1", "cn_t2", "cn_t3", "us_avg", "eu_avg", "uk_avg", "custom"
+        public string CurrencyCode;  // "TL", "CNY", "USD", "EUR", "GBP"
         public UsageProfile Profile;
-        public int CustomWatts;      // 0 = automatic hardware wattage estimate
+        public int CustomWatts;      // 0 = auto hardware estimate
         public bool IncludeMonitors;
 
         public UserSettings()
         {
-            bool isTurkishOs = false;
-            try
-            {
-                isTurkishOs = string.Equals(CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, "tr", StringComparison.OrdinalIgnoreCase);
-            }
-            catch
-            {
-            }
-
-            if (isTurkishOs)
+            string osLang = DetectSystemLanguage();
+            if (osLang == "tr")
             {
                 Language = "tr";
                 PricePerKwh = TariffTrMixed;
                 TariffKey = "tr_mixed";
                 CurrencyCode = "TL";
+            }
+            else if (osLang == "zh")
+            {
+                Language = "zh";
+                PricePerKwh = TariffCnTier1;
+                TariffKey = "cn_t1";
+                CurrencyCode = "CNY";
             }
             else
             {
@@ -207,15 +211,40 @@ namespace PCUptime
             IncludeMonitors = true;
         }
 
+        public static string DetectSystemLanguage()
+        {
+            try
+            {
+                string two = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
+                if (string.Equals(two, "tr", StringComparison.OrdinalIgnoreCase)) return "tr";
+                if (string.Equals(two, "zh", StringComparison.OrdinalIgnoreCase)) return "zh";
+            }
+            catch
+            {
+            }
+            return "en";
+        }
+
         public bool IsTurkish
         {
             get { return string.Equals(Language, "tr", StringComparison.OrdinalIgnoreCase); }
+        }
+
+        public bool IsChinese
+        {
+            get { return string.Equals(Language, "zh", StringComparison.OrdinalIgnoreCase); }
+        }
+
+        public string UiFontFamily
+        {
+            get { return IsChinese ? "Microsoft YaHei UI" : "Segoe UI"; }
         }
 
         public string CurrencySymbol
         {
             get
             {
+                if (CurrencyCode == "CNY") return "¥";
                 if (CurrencyCode == "USD") return "$";
                 if (CurrencyCode == "EUR") return "€";
                 if (CurrencyCode == "GBP") return "£";
@@ -223,16 +252,27 @@ namespace PCUptime
             }
         }
 
-        public CultureInfo ActiveCulture
+        public string BigCurrencyUnit
         {
-            get { return GetCulture(IsTurkish); }
+            get
+            {
+                if (CurrencyCode == "CNY" && IsChinese) return "元";
+                return CurrencyCode;
+            }
         }
 
-        public static CultureInfo GetCulture(bool isTurkish)
+        public CultureInfo ActiveCulture
+        {
+            get { return GetCulture(Language); }
+        }
+
+        public static CultureInfo GetCulture(string lang)
         {
             try
             {
-                return CultureInfo.GetCultureInfo(isTurkish ? "tr-TR" : "en-US");
+                if (lang == "tr") return CultureInfo.GetCultureInfo("tr-TR");
+                if (lang == "zh") return CultureInfo.GetCultureInfo("zh-CN");
+                return CultureInfo.GetCultureInfo("en-US");
             }
             catch
             {
@@ -240,16 +280,25 @@ namespace PCUptime
             }
         }
 
+        public string T(string en, string tr, string zh)
+        {
+            if (IsTurkish) return tr;
+            if (IsChinese) return zh;
+            return en;
+        }
+
         public string GetTariffDisplayLabel()
         {
-            bool tr = IsTurkish;
-            if (TariffKey == "tr_low") return tr ? "Düşük" : "TR Low";
-            if (TariffKey == "tr_mixed") return tr ? "Karma" : "TR Mixed";
-            if (TariffKey == "tr_high") return tr ? "Yüksek" : "TR High";
-            if (TariffKey == "us_avg") return tr ? "ABD Ort." : "US Avg";
-            if (TariffKey == "eu_avg") return tr ? "AB Ort." : "EU Avg";
-            if (TariffKey == "uk_avg") return tr ? "BK Ort." : "UK Avg";
-            return tr ? "Özel" : "Custom";
+            if (TariffKey == "tr_low") return T("TR Low", "Düşük", "土耳其低档");
+            if (TariffKey == "tr_mixed") return T("TR Mixed", "Karma", "土耳其均价");
+            if (TariffKey == "tr_high") return T("TR High", "Yüksek", "土耳其高档");
+            if (TariffKey == "cn_t1") return T("CN Tier 1", "Çin 1. Kad.", "一档电价");
+            if (TariffKey == "cn_t2") return T("CN Tier 2", "Çin 2. Kad.", "二档电价");
+            if (TariffKey == "cn_t3") return T("CN Tier 3", "Çin 3. Kad.", "三档电价");
+            if (TariffKey == "us_avg") return T("US Avg", "ABD Ort.", "美国均价");
+            if (TariffKey == "eu_avg") return T("EU Avg", "AB Ort.", "欧盟均价");
+            if (TariffKey == "uk_avg") return T("UK Avg", "BK Ort.", "英国均价");
+            return T("Custom", "Özel", "自定义");
         }
 
         public string FormatRatePerKwh()
@@ -257,6 +306,8 @@ namespace PCUptime
             CultureInfo c = ActiveCulture;
             if (CurrencyCode == "TL")
                 return string.Format(c, "{0:0.00} ₺/kWh", PricePerKwh);
+            if (CurrencyCode == "CNY" && IsChinese)
+                return string.Format(c, "¥{0:0.00}/度", PricePerKwh);
             return string.Format(c, "{0}{1:0.00}/kWh", CurrencySymbol, PricePerKwh);
         }
 
@@ -295,7 +346,7 @@ namespace PCUptime
                     string key = raw.Substring(0, eq).Trim();
                     string val = raw.Substring(eq + 1).Trim();
 
-                    if (key == "Language" && (val == "tr" || val == "en"))
+                    if (key == "Language" && (val == "tr" || val == "en" || val == "zh"))
                     {
                         s.Language = val;
                     }
@@ -311,13 +362,12 @@ namespace PCUptime
                     }
                     else if (key == "TariffLabel" && !string.IsNullOrEmpty(val))
                     {
-                        // Backward compatibility with v1.1 settings.ini
                         if (val == "Düşük") s.TariffKey = "tr_low";
                         else if (val == "Karma") s.TariffKey = "tr_mixed";
                         else if (val == "Yüksek") s.TariffKey = "tr_high";
                         else s.TariffKey = "custom";
                     }
-                    else if (key == "CurrencyCode" && (val == "TL" || val == "USD" || val == "EUR" || val == "GBP"))
+                    else if (key == "CurrencyCode" && (val == "TL" || val == "CNY" || val == "USD" || val == "EUR" || val == "GBP"))
                     {
                         s.CurrencyCode = val;
                     }
@@ -356,10 +406,10 @@ namespace PCUptime
                     Directory.CreateDirectory(dir);
 
                 StringBuilder sb = new StringBuilder();
-                sb.AppendLine("Language=" + (Language ?? "tr"));
+                sb.AppendLine("Language=" + (Language ?? "en"));
                 sb.AppendLine("PricePerKwh=" + PricePerKwh.ToString("0.####", CultureInfo.InvariantCulture));
                 sb.AppendLine("TariffKey=" + (TariffKey ?? "custom"));
-                sb.AppendLine("CurrencyCode=" + (CurrencyCode ?? "TL"));
+                sb.AppendLine("CurrencyCode=" + (CurrencyCode ?? "USD"));
                 sb.AppendLine("Profile=" + ((int)Profile).ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("CustomWatts=" + CustomWatts.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("IncludeMonitors=" + (IncludeMonitors ? "1" : "0"));
@@ -400,48 +450,27 @@ namespace PCUptime
             if (!IsDetected)
                 return 120;
 
-            double cpuFactor;
-            double gpuFactor;
-            double platformBase;
-            double psuEfficiency;
-            double monitorWattEach;
-
+            double cpuFactor, gpuFactor, platformBase, psuEfficiency, monitorWattEach;
             if (IsLaptop)
             {
                 if (profile == UsageProfile.Light)
                 {
-                    cpuFactor = 0.18;
-                    gpuFactor = 0.08;
-                    platformBase = 8.0;
-                    psuEfficiency = 0.88;
-                    monitorWattEach = 22.0;
+                    cpuFactor = 0.18; gpuFactor = 0.08; platformBase = 8.0; psuEfficiency = 0.88; monitorWattEach = 22.0;
                 }
                 else if (profile == UsageProfile.Heavy)
                 {
-                    cpuFactor = 0.78;
-                    gpuFactor = 0.85;
-                    platformBase = 14.0;
-                    psuEfficiency = 0.89;
-                    monitorWattEach = 28.0;
+                    cpuFactor = 0.78; gpuFactor = 0.85; platformBase = 14.0; psuEfficiency = 0.89; monitorWattEach = 28.0;
                 }
                 else
                 {
-                    cpuFactor = 0.38;
-                    gpuFactor = 0.30;
-                    platformBase = 11.0;
-                    psuEfficiency = 0.88;
-                    monitorWattEach = 25.0;
+                    cpuFactor = 0.38; gpuFactor = 0.30; platformBase = 11.0; psuEfficiency = 0.88; monitorWattEach = 25.0;
                 }
 
                 double ramW = Math.Max(2.0, RamGb * 0.15);
                 double diskW = SsdCount * 2.0 + HddCount * 3.5;
-                double dcWatts = (CpuTdpWatts * cpuFactor) + (GpuTdpWatts * gpuFactor) + platformBase + ramW + diskW;
-                double wallWatts = dcWatts / psuEfficiency;
-
+                double wallWatts = ((CpuTdpWatts * cpuFactor) + (GpuTdpWatts * gpuFactor) + platformBase + ramW + diskW) / psuEfficiency;
                 if (includeMonitors && MonitorCount > 1)
-                {
                     wallWatts += (MonitorCount - 1) * monitorWattEach;
-                }
 
                 return Math.Max(12, (int)Math.Round(wallWatts));
             }
@@ -449,65 +478,51 @@ namespace PCUptime
             {
                 if (profile == UsageProfile.Light)
                 {
-                    cpuFactor = 0.22;
-                    gpuFactor = 0.14;
-                    platformBase = 22.0;
-                    psuEfficiency = 0.84;
-                    monitorWattEach = 24.0;
+                    cpuFactor = 0.22; gpuFactor = 0.14; platformBase = 22.0; psuEfficiency = 0.84; monitorWattEach = 24.0;
                 }
                 else if (profile == UsageProfile.Heavy)
                 {
-                    cpuFactor = 0.80;
-                    gpuFactor = 0.88;
-                    platformBase = 30.0;
-                    psuEfficiency = 0.87;
-                    monitorWattEach = 30.0;
+                    cpuFactor = 0.80; gpuFactor = 0.88; platformBase = 30.0; psuEfficiency = 0.87; monitorWattEach = 30.0;
                 }
                 else
                 {
-                    cpuFactor = 0.45;
-                    gpuFactor = 0.42;
-                    platformBase = 25.0;
-                    psuEfficiency = 0.86;
-                    monitorWattEach = 28.0;
+                    cpuFactor = 0.45; gpuFactor = 0.42; platformBase = 25.0; psuEfficiency = 0.86; monitorWattEach = 28.0;
                 }
 
                 double ramW = Math.Max(4.0, (RamModules > 0 ? RamModules * 3.5 : RamGb * 0.28));
                 double diskW = SsdCount * 3.5 + HddCount * 7.0;
-                double dcWatts = (CpuTdpWatts * cpuFactor) + (GpuTdpWatts * gpuFactor) + platformBase + ramW + diskW;
-                double wallWatts = dcWatts / psuEfficiency;
-
+                double wallWatts = ((CpuTdpWatts * cpuFactor) + (GpuTdpWatts * gpuFactor) + platformBase + ramW + diskW) / psuEfficiency;
                 if (includeMonitors)
-                {
-                    int mons = Math.Max(1, MonitorCount);
-                    wallWatts += mons * monitorWattEach;
-                }
+                    wallWatts += Math.Max(1, MonitorCount) * monitorWattEach;
 
                 return Math.Max(35, (int)Math.Round(wallWatts));
             }
         }
 
-        public string BuildSystemSummary(bool isTurkish, CultureInfo culture)
+        public string BuildSystemSummary(UserSettings s)
         {
+            CultureInfo c = s.ActiveCulture;
             List<string> parts = new List<string>();
-            parts.Add(IsLaptop ? "Laptop" : (isTurkish ? "Masaüstü" : "Desktop"));
+            parts.Add(IsLaptop ? s.T("Laptop", "Laptop", "笔记本") : s.T("Desktop", "Masaüstü", "台式机"));
 
             if (RamGb > 0)
-                parts.Add(string.Format(culture, "{0} GB RAM", RamGb));
+                parts.Add(string.Format(c, "{0} GB {1}", RamGb, s.IsChinese ? "内存" : "RAM"));
 
             if (SsdCount > 0 && HddCount > 0)
-                parts.Add(string.Format(culture, "{0} SSD, {1} HDD", SsdCount, HddCount));
+                parts.Add(string.Format(c, "{0} SSD, {1} HDD", SsdCount, HddCount));
             else if (SsdCount > 0)
-                parts.Add(string.Format(culture, "{0} SSD", SsdCount));
+                parts.Add(string.Format(c, "{0} SSD", SsdCount));
             else if (HddCount > 0)
-                parts.Add(string.Format(culture, "{0} HDD", HddCount));
+                parts.Add(string.Format(c, "{0} HDD", HddCount));
 
             if (MonitorCount > 0)
             {
-                if (isTurkish)
-                    parts.Add(string.Format(culture, "{0} Monitör", MonitorCount));
+                if (s.IsTurkish)
+                    parts.Add(string.Format(c, "{0} Monitör", MonitorCount));
+                else if (s.IsChinese)
+                    parts.Add(string.Format(c, "{0} 显示器", MonitorCount));
                 else
-                    parts.Add(string.Format(culture, "{0} {1}", MonitorCount, MonitorCount == 1 ? "Monitor" : "Monitors"));
+                    parts.Add(string.Format(c, "{0} {1}", MonitorCount, MonitorCount == 1 ? "Monitor" : "Monitors"));
             }
 
             return string.Join(" · ", parts.ToArray());
@@ -534,13 +549,9 @@ namespace PCUptime
                             if (sysType == 2 || sysType == 8 || sysType == 9 || sysType == 10 || sysType == 14)
                                 info.IsLaptop = true;
                         }
-
                         object ramObj = obj["TotalPhysicalMemory"];
                         if (ramObj != null)
-                        {
-                            ulong bytes = Convert.ToUInt64(ramObj);
-                            info.RamGb = Math.Max(1, (int)Math.Round(bytes / (1024.0 * 1024.0 * 1024.0)));
-                        }
+                            info.RamGb = Math.Max(1, (int)Math.Round(Convert.ToUInt64(ramObj) / (1024.0 * 1024.0 * 1024.0)));
                     }
                 }
             }
@@ -554,11 +565,7 @@ namespace PCUptime
                 {
                     using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT BatteryStatus FROM Win32_Battery"))
                     {
-                        foreach (ManagementObject obj in s.Get())
-                        {
-                            info.IsLaptop = true;
-                            break;
-                        }
+                        foreach (ManagementObject obj in s.Get()) { info.IsLaptop = true; break; }
                     }
                 }
                 catch
@@ -579,13 +586,11 @@ namespace PCUptime
                             sumBytes += Convert.ToUInt64(obj["Capacity"]);
                     }
                 }
-
                 info.RamModules = mods;
                 if (sumBytes > 0)
                 {
                     int exactGb = (int)Math.Round(sumBytes / (1024.0 * 1024.0 * 1024.0));
-                    if (exactGb > 0)
-                        info.RamGb = exactGb;
+                    if (exactGb > 0) info.RamGb = exactGb;
                 }
             }
             catch
@@ -715,35 +720,23 @@ namespace PCUptime
         private static bool IsVirtualDisplayAdapter(string name)
         {
             string u = name.ToUpperInvariant();
-            return u.Contains("MICROSOFT BASIC") ||
-                   u.Contains("MICROSOFT REMOTE") ||
-                   u.Contains("PARSEC") ||
-                   u.Contains("VIRTUAL") ||
-                   u.Contains("CITRIX") ||
-                   u.Contains("TEAMVIEWER") ||
-                   u.Contains("ANYDESK") ||
-                   u.Contains("META ") ||
-                   u.Contains("OCULUS") ||
-                   u.Contains("LUMINONCORE") ||
-                   u.Contains("IDD ");
+            return u.Contains("MICROSOFT BASIC") || u.Contains("MICROSOFT REMOTE") || u.Contains("PARSEC") ||
+                   u.Contains("VIRTUAL") || u.Contains("CITRIX") || u.Contains("TEAMVIEWER") || u.Contains("ANYDESK") ||
+                   u.Contains("META ") || u.Contains("OCULUS") || u.Contains("LUMINONCORE") || u.Contains("IDD ");
         }
 
         private static bool IsIntegratedGpu(string name)
         {
             string u = name.ToUpperInvariant();
-            if (u.Contains("INTEL") && !u.Contains("ARC A") && !u.Contains("ARC B"))
-                return true;
-            if (u.Contains("UHD GRAPHICS") || u.Contains("HD GRAPHICS") || u.Contains("IRIS"))
-                return true;
-            if (u == "AMD RADEON GRAPHICS" || u == "RADEON GRAPHICS" || u.Contains("VEGA 3") || u.Contains("VEGA 6") || u.Contains("VEGA 7") || u.Contains("VEGA 8") || u.Contains("VEGA 11") || u.Contains("RADEON 780M") || u.Contains("RADEON 680M"))
-                return true;
+            if (u.Contains("INTEL") && !u.Contains("ARC A") && !u.Contains("ARC B")) return true;
+            if (u.Contains("UHD GRAPHICS") || u.Contains("HD GRAPHICS") || u.Contains("IRIS")) return true;
+            if (u == "AMD RADEON GRAPHICS" || u == "RADEON GRAPHICS" || u.Contains("VEGA 3") || u.Contains("VEGA 6") || u.Contains("VEGA 7") || u.Contains("VEGA 8") || u.Contains("VEGA 11") || u.Contains("RADEON 780M") || u.Contains("RADEON 680M")) return true;
             return false;
         }
 
         private static int EstimateCpuTdp(string cpuName, int cores, bool isLaptop)
         {
             string u = (cpuName ?? "").ToUpperInvariant();
-
             bool mobileSuffix = Regex.IsMatch(u, @"\d{4,5}(U|P|Y|G1|G4|G7|H|HS|HX|HK|HQ)\b");
             if (isLaptop || mobileSuffix)
             {
@@ -753,7 +746,6 @@ namespace PCUptime
                 if (Regex.IsMatch(u, @"\d(U|Y|G1|G4|G7)\b") || u.Contains("N100") || u.Contains("N200") || u.Contains("N95")) return 15;
                 return cores >= 8 ? 45 : 25;
             }
-
             if (u.Contains("THREADRIPPER")) return 280;
             if (u.Contains("RYZEN"))
             {
@@ -764,16 +756,12 @@ namespace PCUptime
                 if (u.Contains("5800X3D") || u.Contains("5700X3D") || u.Contains("5800X") || u.Contains("7700X") || u.Contains("7600X") || u.Contains("3800X")) return 105;
                 if (u.Contains("3600X") || u.Contains("2600X") || u.Contains("2700X")) return 95;
                 if (u.Contains("RYZEN 9")) return 120;
-                if (u.Contains("RYZEN 7")) return 65;
-                if (u.Contains("RYZEN 5")) return 65;
-                if (u.Contains("RYZEN 3")) return 65;
                 return 65;
             }
             if (u.Contains("FX-9")) return 220;
             if (u.Contains("FX-8")) return 125;
             if (u.Contains("FX-6") || u.Contains("FX-4")) return 95;
             if (u.Contains("ATHLON")) return 45;
-
             if (u.Contains("INTEL") || u.Contains("CORE") || u.Contains("XEON"))
             {
                 bool isK = Regex.IsMatch(u, @"\d{4,5}(K|KF|KS)\b");
@@ -784,7 +772,6 @@ namespace PCUptime
                 if (u.Contains("XEON")) return 105;
                 if (u.Contains("PENTIUM") || u.Contains("CELERON")) return 54;
             }
-
             if (cores >= 16) return 150;
             if (cores >= 12) return 115;
             if (cores >= 8) return 90;
@@ -794,19 +781,11 @@ namespace PCUptime
 
         private static int EstimateGpuTdp(string gpuName, bool isLaptop)
         {
-            if (string.IsNullOrEmpty(gpuName) || IsIntegratedGpu(gpuName))
-                return 0;
-
+            if (string.IsNullOrEmpty(gpuName) || IsIntegratedGpu(gpuName)) return 0;
             string u = gpuName.ToUpperInvariant();
             bool mobileGpu = isLaptop || u.Contains("LAPTOP") || u.Contains("MOBILE") || u.Contains("MAX-Q");
-
             int desktopTdp = LookupDesktopGpuTdp(u);
-            if (mobileGpu)
-            {
-                int scaled = (int)Math.Round(desktopTdp * 0.52);
-                return Math.Max(35, Math.Min(150, scaled));
-            }
-
+            if (mobileGpu) return Math.Max(35, Math.Min(150, (int)Math.Round(desktopTdp * 0.52)));
             return desktopTdp;
         }
 
@@ -818,7 +797,6 @@ namespace PCUptime
             if (u.Contains("5070")) return 250;
             if (u.Contains("5060 TI")) return 180;
             if (u.Contains("5060")) return 145;
-
             if (u.Contains("4090")) return 450;
             if (u.Contains("4080")) return 320;
             if (u.Contains("4070 TI")) return 285;
@@ -827,7 +805,6 @@ namespace PCUptime
             if (u.Contains("4060 TI")) return 160;
             if (u.Contains("4060")) return 115;
             if (u.Contains("4050")) return 75;
-
             if (u.Contains("3090 TI")) return 450;
             if (u.Contains("3090")) return 350;
             if (u.Contains("3080 TI")) return 350;
@@ -837,7 +814,6 @@ namespace PCUptime
             if (u.Contains("3060 TI")) return 200;
             if (u.Contains("3060")) return 170;
             if (u.Contains("3050")) return 130;
-
             if (u.Contains("2080 TI")) return 250;
             if (u.Contains("2080")) return 215;
             if (u.Contains("2070")) return 175;
@@ -857,7 +833,6 @@ namespace PCUptime
             if (u.Contains("950")) return 90;
             if (u.Contains("750")) return 60;
             if (u.Contains("GT 1030") || u.Contains("GT 730") || u.Contains("GT 710") || u.Contains("MX")) return 30;
-
             if (u.Contains("9070 XT")) return 304;
             if (u.Contains("9070")) return 220;
             if (u.Contains("7900 XTX")) return 355;
@@ -893,13 +868,11 @@ namespace PCUptime
             if (u.Contains("R9 390") || u.Contains("R9 290")) return 275;
             if (u.Contains("R9 380") || u.Contains("R9 280")) return 190;
             if (u.Contains("R7 ")) return 85;
-
             if (u.Contains("B580")) return 190;
             if (u.Contains("B570")) return 150;
             if (u.Contains("A770") || u.Contains("A750")) return 225;
             if (u.Contains("A580")) return 185;
             if (u.Contains("A380")) return 75;
-
             return 125;
         }
     }
@@ -911,10 +884,11 @@ namespace PCUptime
         private static readonly Color ColBorder = Color.FromArgb(52, 62, 77);
         private static readonly Color ColText = Color.FromArgb(240, 246, 252);
         private static readonly Color ColMuted = Color.FromArgb(139, 148, 158);
-        private static readonly Color ColAccent = Color.FromArgb(245, 158, 11);
+        private static readonly Color ColAmber = Color.FromArgb(245, 158, 11);
+        private static readonly Color ColRed = Color.FromArgb(248, 113, 113);
         private static readonly Color ColCyan = Color.FromArgb(94, 234, 212);
 
-        private readonly bool _isTurkish;
+        private readonly UserSettings _s;
         private readonly CultureInfo _culture;
         private readonly TextBox _txtPrice;
         private readonly ComboBox _cmbCurrency;
@@ -932,86 +906,94 @@ namespace PCUptime
 
         public TariffSettingsDialog(UserSettings current, int autoWatts)
         {
-            _isTurkish = current.IsTurkish;
+            _s = current;
             _culture = current.ActiveCulture;
             _selectedKey = current.TariffKey ?? "custom";
 
             ResultPrice = current.PricePerKwh;
             ResultTariffKey = _selectedKey;
-            ResultCurrencyCode = current.CurrencyCode ?? "TL";
+            ResultCurrencyCode = current.CurrencyCode ?? "USD";
             ResultCustomWatts = current.CustomWatts;
             ResultIncludeMonitors = current.IncludeMonitors;
 
-            Text = _isTurkish ? "Elektrik Tarife ve Güç Ayarları" : "Electricity Tariff & Power Settings";
+            string fontName = current.UiFontFamily;
+
+            Text = current.T("Electricity Tariff & Power Settings", "Elektrik Tarife ve Güç Ayarları", "电价方案与功耗设置");
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
             StartPosition = FormStartPosition.CenterParent;
             BackColor = ColBg;
             ForeColor = ColText;
-            Font = new Font("Segoe UI", 9f, FontStyle.Regular);
+            Font = new Font(fontName, 9f, FontStyle.Regular);
 
             SuspendLayout();
             AutoScaleDimensions = new SizeF(96f, 96f);
             AutoScaleMode = AutoScaleMode.Dpi;
-            ClientSize = new Size(390, 366);
+            ClientSize = new Size(394, 434);
 
-            Label lblTr = new Label();
-            lblTr.Text = _isTurkish ? "Türkiye EPDK 2026 Mesken (vergiler dahil):" : "Turkey EPDK 2026 Residential (tax incl.):";
-            lblTr.ForeColor = ColMuted;
-            lblTr.Location = new Point(18, 14);
-            lblTr.AutoSize = true;
+            // Row 1: China State Grid Residential
+            Label lblCn = MakeLabel(current.T("China Residential Tiered (CNY/kWh):", "Çin Kademeli Mesken Tarifesi (CNY/kWh):", "中国居民阶梯电价参考 (元/度):"), ColMuted, new Point(18, 12));
+            Controls.Add(lblCn);
+
+            Button btnCn1 = CreatePresetButton(current.T("CN Tier 1\r\n¥0.55", "Çin 1. Kad.\r\n¥0,55", "第一档\r\n¥0.55"), new Point(18, 34), new Size(113, 40), ColRed, fontName);
+            btnCn1.Click += delegate { ApplyPreset(UserSettings.TariffCnTier1, "cn_t1", "CNY"); };
+            Controls.Add(btnCn1);
+
+            Button btnCn2 = CreatePresetButton(current.T("CN Tier 2\r\n¥0.60", "Çin 2. Kad.\r\n¥0,60", "第二档\r\n¥0.60"), new Point(140, 34), new Size(113, 40), ColRed, fontName);
+            btnCn2.Click += delegate { ApplyPreset(UserSettings.TariffCnTier2, "cn_t2", "CNY"); };
+            Controls.Add(btnCn2);
+
+            Button btnCn3 = CreatePresetButton(current.T("CN Tier 3\r\n¥0.85", "Çin 3. Kad.\r\n¥0,85", "第三档\r\n¥0.85"), new Point(262, 34), new Size(113, 40), ColRed, fontName);
+            btnCn3.Click += delegate { ApplyPreset(UserSettings.TariffCnTier3, "cn_t3", "CNY"); };
+            Controls.Add(btnCn3);
+
+            // Row 2: Turkey EPDK 2026
+            Label lblTr = MakeLabel(current.T("Turkey EPDK 2026 Residential (tax incl.):", "Türkiye EPDK 2026 Mesken (vergiler dahil):", "土耳其 EPDK 2026 居民电价 (含税):"), ColMuted, new Point(18, 84));
             Controls.Add(lblTr);
 
-            Button btnTrLow = CreatePresetButton(_isTurkish ? "Düşük\r\n3,24 ₺" : "TR Low\r\n3.24 ₺", new Point(18, 36), new Size(112, 42), ColAccent);
+            Button btnTrLow = CreatePresetButton(current.T("TR Low\r\n3.24 ₺", "Düşük\r\n3,24 ₺", "低档\r\n3.24 ₺"), new Point(18, 106), new Size(113, 40), ColAmber, fontName);
             btnTrLow.Click += delegate { ApplyPreset(UserSettings.TariffTrLow, "tr_low", "TL"); };
             Controls.Add(btnTrLow);
 
-            Button btnTrMixed = CreatePresetButton(_isTurkish ? "Karma (Ort.)\r\n4,05 ₺" : "TR Mixed\r\n4.05 ₺", new Point(139, 36), new Size(112, 42), ColAccent);
+            Button btnTrMixed = CreatePresetButton(current.T("TR Mixed\r\n4.05 ₺", "Karma (Ort.)\r\n4,05 ₺", "均价\r\n4.05 ₺"), new Point(140, 106), new Size(113, 40), ColAmber, fontName);
             btnTrMixed.Click += delegate { ApplyPreset(UserSettings.TariffTrMixed, "tr_mixed", "TL"); };
             Controls.Add(btnTrMixed);
 
-            Button btnTrHigh = CreatePresetButton(_isTurkish ? "Yüksek\r\n4,86 ₺" : "TR High\r\n4.86 ₺", new Point(260, 36), new Size(112, 42), ColAccent);
+            Button btnTrHigh = CreatePresetButton(current.T("TR High\r\n4.86 ₺", "Yüksek\r\n4,86 ₺", "高档\r\n4.86 ₺"), new Point(262, 106), new Size(113, 40), ColAmber, fontName);
             btnTrHigh.Click += delegate { ApplyPreset(UserSettings.TariffTrHigh, "tr_high", "TL"); };
             Controls.Add(btnTrHigh);
 
-            Label lblGlobal = new Label();
-            lblGlobal.Text = _isTurkish ? "Global Ortalama Tarifeler:" : "Global Benchmark Rates:";
-            lblGlobal.ForeColor = ColMuted;
-            lblGlobal.Location = new Point(18, 88);
-            lblGlobal.AutoSize = true;
+            // Row 3: Global Benchmarks
+            Label lblGlobal = MakeLabel(current.T("Global Benchmark Rates:", "Global Ortalama Tarifeler:", "全球参考电价:"), ColMuted, new Point(18, 156));
             Controls.Add(lblGlobal);
 
-            Button btnUs = CreatePresetButton(_isTurkish ? "ABD Ort.\r\n$0,17" : "US Avg\r\n$0.17", new Point(18, 110), new Size(112, 40), ColCyan);
+            Button btnUs = CreatePresetButton(current.T("US Avg\r\n$0.17", "ABD Ort.\r\n$0,17", "美国均价\r\n$0.17"), new Point(18, 178), new Size(113, 40), ColCyan, fontName);
             btnUs.Click += delegate { ApplyPreset(UserSettings.TariffUsAvg, "us_avg", "USD"); };
             Controls.Add(btnUs);
 
-            Button btnEu = CreatePresetButton(_isTurkish ? "AB Ort.\r\n€0,29" : "EU Avg\r\n€0.29", new Point(139, 110), new Size(112, 40), ColCyan);
+            Button btnEu = CreatePresetButton(current.T("EU Avg\r\n€0.29", "AB Ort.\r\n€0,29", "欧盟均价\r\n€0.29"), new Point(140, 178), new Size(113, 40), ColCyan, fontName);
             btnEu.Click += delegate { ApplyPreset(UserSettings.TariffEuAvg, "eu_avg", "EUR"); };
             Controls.Add(btnEu);
 
-            Button btnUk = CreatePresetButton(_isTurkish ? "BK Ort.\r\n£0,28" : "UK Avg\r\n£0.28", new Point(260, 110), new Size(112, 40), ColCyan);
+            Button btnUk = CreatePresetButton(current.T("UK Avg\r\n£0.28", "BK Ort.\r\n£0,28", "英国均价\r\n£0.28"), new Point(262, 178), new Size(113, 40), ColCyan, fontName);
             btnUk.Click += delegate { ApplyPreset(UserSettings.TariffUkAvg, "uk_avg", "GBP"); };
             Controls.Add(btnUk);
 
-            Label lblPrice = new Label();
-            lblPrice.Text = _isTurkish ? "Birim Fiyat (/ kWh):" : "Unit Price (/ kWh):";
-            lblPrice.ForeColor = ColText;
-            lblPrice.Location = new Point(18, 168);
-            lblPrice.AutoSize = true;
+            // Unit Price + Currency
+            Label lblPrice = MakeLabel(current.T("Unit Price (/ kWh):", "Birim Fiyat (/ kWh):", "自定义电价 (/ 度):"), ColText, new Point(18, 236));
             Controls.Add(lblPrice);
 
             _txtPrice = new TextBox();
             _txtPrice.BackColor = ColSurface;
             _txtPrice.ForeColor = ColText;
             _txtPrice.BorderStyle = BorderStyle.FixedSingle;
-            _txtPrice.Location = new Point(158, 165);
+            _txtPrice.Location = new Point(156, 233);
             _txtPrice.Size = new Size(106, 24);
             _txtPrice.Text = current.PricePerKwh.ToString("0.00", _culture);
             _txtPrice.TextChanged += delegate
             {
-                if (!_suppressCustomReset)
-                    _selectedKey = "custom";
+                if (!_suppressCustomReset) _selectedKey = "custom";
             };
             Controls.Add(_txtPrice);
 
@@ -1020,92 +1002,95 @@ namespace PCUptime
             _cmbCurrency.BackColor = ColSurface;
             _cmbCurrency.ForeColor = ColText;
             _cmbCurrency.FlatStyle = FlatStyle.Flat;
-            _cmbCurrency.Location = new Point(272, 164);
-            _cmbCurrency.Size = new Size(100, 24);
-            _cmbCurrency.Items.AddRange(new object[] { "TL (₺)", "USD ($)", "EUR (€)", "GBP (£)" });
+            _cmbCurrency.Location = new Point(270, 232);
+            _cmbCurrency.Size = new Size(105, 24);
+            _cmbCurrency.Items.AddRange(new object[] { "TL (₺)", "CNY (¥)", "USD ($)", "EUR (€)", "GBP (£)" });
             SelectCurrencyInCombo(current.CurrencyCode);
             _cmbCurrency.SelectedIndexChanged += delegate
             {
-                if (!_suppressCustomReset)
-                    _selectedKey = "custom";
+                if (!_suppressCustomReset) _selectedKey = "custom";
             };
             Controls.Add(_cmbCurrency);
 
-            Label lblWatt = new Label();
-            lblWatt.Text = _isTurkish
-                ? string.Format(_culture, "Özel Güç (Watt) — 0 = Otomatik (~{0} W):", autoWatts)
-                : string.Format(_culture, "Custom Power (Watts) — 0 = Auto (~{0} W):", autoWatts);
-            lblWatt.ForeColor = ColText;
-            lblWatt.Location = new Point(18, 204);
-            lblWatt.AutoSize = true;
+            // Custom Watts
+            Label lblWatt = MakeLabel(
+                string.Format(_culture, current.T("Custom Power (Watts) — 0 = Auto (~{0} W):", "Özel Güç (Watt) — 0 = Otomatik (~{0} W):", "自定义功率 (瓦) — 0 = 自动估算 (~{0} W):"), autoWatts),
+                ColText,
+                new Point(18, 272));
             Controls.Add(lblWatt);
 
             _txtCustomWatts = new TextBox();
             _txtCustomWatts.BackColor = ColSurface;
             _txtCustomWatts.ForeColor = ColText;
             _txtCustomWatts.BorderStyle = BorderStyle.FixedSingle;
-            _txtCustomWatts.Location = new Point(18, 227);
+            _txtCustomWatts.Location = new Point(18, 295);
             _txtCustomWatts.Size = new Size(106, 24);
             _txtCustomWatts.Text = current.CustomWatts.ToString(CultureInfo.InvariantCulture);
             Controls.Add(_txtCustomWatts);
 
-            Label lblWattHint = new Label();
-            lblWattHint.Text = _isTurkish
-                ? "Wattmetre ölçümünüz varsa girebilirsiniz."
-                : "Optional: enter a real watt-meter reading.";
-            lblWattHint.ForeColor = ColMuted;
-            lblWattHint.Font = new Font("Segoe UI", 8.2f);
-            lblWattHint.Location = new Point(132, 231);
-            lblWattHint.AutoSize = true;
+            Label lblWattHint = MakeLabel(
+                current.T("Optional: enter a real watt-meter reading.", "Wattmetre ölçümünüz varsa girebilirsiniz.", "可选：如有功率计实测数据可直接填入。"),
+                ColMuted,
+                new Point(132, 299));
+            lblWattHint.Font = new Font(fontName, 8.2f);
             Controls.Add(lblWattHint);
 
             _chkMonitors = new CheckBox();
-            _chkMonitors.Text = _isTurkish
-                ? "Monitör elektrik tüketimini hesaba dahil et"
-                : "Include monitor power consumption in estimate";
+            _chkMonitors.UseMnemonic = false;
+            _chkMonitors.Text = current.T("Include monitor power consumption in estimate", "Monitör elektrik tüketimini hesaba dahil et", "估算时包含显示器功耗");
             _chkMonitors.ForeColor = ColText;
             _chkMonitors.Checked = current.IncludeMonitors;
-            _chkMonitors.Location = new Point(18, 264);
+            _chkMonitors.Location = new Point(18, 332);
             _chkMonitors.AutoSize = true;
             Controls.Add(_chkMonitors);
 
-            _lblError = new Label();
-            _lblError.Text = "";
-            _lblError.ForeColor = Color.FromArgb(248, 113, 113);
-            _lblError.Font = new Font("Segoe UI", 8.3f);
-            _lblError.Location = new Point(18, 292);
-            _lblError.Size = new Size(354, 20);
+            _lblError = MakeLabel("", ColRed, new Point(18, 360));
+            _lblError.Font = new Font(fontName, 8.3f);
+            _lblError.AutoSize = false;
+            _lblError.Size = new Size(358, 20);
             Controls.Add(_lblError);
 
             Button btnSave = new Button();
-            btnSave.Text = _isTurkish ? "Kaydet" : "Save";
+            btnSave.UseMnemonic = false;
+            btnSave.Text = current.T("Save", "Kaydet", "保存");
             btnSave.FlatStyle = FlatStyle.Flat;
             btnSave.BackColor = Color.FromArgb(26, 61, 46);
             btnSave.ForeColor = Color.FromArgb(110, 231, 183);
             btnSave.FlatAppearance.BorderColor = Color.FromArgb(52, 211, 153);
-            btnSave.Location = new Point(186, 318);
+            btnSave.Location = new Point(188, 386);
             btnSave.Size = new Size(90, 32);
             btnSave.Cursor = Cursors.Hand;
             btnSave.Click += BtnSave_Click;
             Controls.Add(btnSave);
 
             Button btnCancel = new Button();
-            btnCancel.Text = _isTurkish ? "İptal" : "Cancel";
+            btnCancel.UseMnemonic = false;
+            btnCancel.Text = current.T("Cancel", "İptal", "取消");
             btnCancel.FlatStyle = FlatStyle.Flat;
             btnCancel.BackColor = ColSurface;
             btnCancel.ForeColor = ColText;
             btnCancel.FlatAppearance.BorderColor = ColBorder;
-            btnCancel.Location = new Point(282, 318);
-            btnCancel.Size = new Size(90, 32);
+            btnCancel.Location = new Point(284, 386);
+            btnCancel.Size = new Size(91, 32);
             btnCancel.Cursor = Cursors.Hand;
             btnCancel.DialogResult = DialogResult.Cancel;
             Controls.Add(btnCancel);
 
             AcceptButton = btnSave;
             CancelButton = btnCancel;
-
             ResumeLayout(false);
             PerformLayout();
+        }
+
+        private static Label MakeLabel(string text, Color color, Point loc)
+        {
+            Label l = new Label();
+            l.UseMnemonic = false;
+            l.Text = text;
+            l.ForeColor = color;
+            l.Location = loc;
+            l.AutoSize = true;
+            return l;
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -1114,9 +1099,10 @@ namespace PCUptime
             NativeMethods.ApplyDarkTitleBar(Handle, ColBg, ColText);
         }
 
-        private Button CreatePresetButton(string text, Point loc, Size size, Color foreColor)
+        private Button CreatePresetButton(string text, Point loc, Size size, Color foreColor, string fontName)
         {
             Button btn = new Button();
+            btn.UseMnemonic = false;
             btn.Text = text;
             btn.Location = loc;
             btn.Size = size;
@@ -1126,23 +1112,25 @@ namespace PCUptime
             btn.FlatAppearance.BorderColor = ColBorder;
             btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(38, 46, 58);
             btn.Cursor = Cursors.Hand;
-            btn.Font = new Font("Segoe UI", 8.2f, FontStyle.Bold);
+            btn.Font = new Font(fontName, 8.2f, FontStyle.Bold);
             return btn;
         }
 
         private void SelectCurrencyInCombo(string code)
         {
-            if (code == "USD") _cmbCurrency.SelectedIndex = 1;
-            else if (code == "EUR") _cmbCurrency.SelectedIndex = 2;
-            else if (code == "GBP") _cmbCurrency.SelectedIndex = 3;
+            if (code == "CNY") _cmbCurrency.SelectedIndex = 1;
+            else if (code == "USD") _cmbCurrency.SelectedIndex = 2;
+            else if (code == "EUR") _cmbCurrency.SelectedIndex = 3;
+            else if (code == "GBP") _cmbCurrency.SelectedIndex = 4;
             else _cmbCurrency.SelectedIndex = 0;
         }
 
         private string GetSelectedCurrencyCode()
         {
-            if (_cmbCurrency.SelectedIndex == 1) return "USD";
-            if (_cmbCurrency.SelectedIndex == 2) return "EUR";
-            if (_cmbCurrency.SelectedIndex == 3) return "GBP";
+            if (_cmbCurrency.SelectedIndex == 1) return "CNY";
+            if (_cmbCurrency.SelectedIndex == 2) return "USD";
+            if (_cmbCurrency.SelectedIndex == 3) return "EUR";
+            if (_cmbCurrency.SelectedIndex == 4) return "GBP";
             return "TL";
         }
 
@@ -1171,9 +1159,7 @@ namespace PCUptime
 
             if (!okPrice || parsedPrice <= 0.005 || parsedPrice > 1000.0)
             {
-                _lblError.Text = _isTurkish
-                    ? "Lütfen geçerli bir kWh fiyatı girin (ör. 4,05)."
-                    : "Please enter a valid kWh rate (e.g. 0.17).";
+                _lblError.Text = _s.T("Please enter a valid kWh rate (e.g. 0.55).", "Lütfen geçerli bir kWh fiyatı girin (ör. 4,05).", "请输入有效的电价 (例如 0.55)。");
                 return;
             }
 
@@ -1183,9 +1169,7 @@ namespace PCUptime
             {
                 if (!int.TryParse(rawWatt, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsedWatt) || parsedWatt < 0 || parsedWatt > 5000)
                 {
-                    _lblError.Text = _isTurkish
-                        ? "Özel Watt değeri 0 ile 5000 arasında olmalıdır."
-                        : "Custom wattage must be between 0 and 5000.";
+                    _lblError.Text = _s.T("Custom wattage must be between 0 and 5000.", "Özel Watt değeri 0 ile 5000 arasında olmalıdır.", "自定义功率必须在 0 到 5000 瓦之间。");
                     return;
                 }
             }
@@ -1209,18 +1193,16 @@ namespace PCUptime
                 if (Math.Abs(price - UserSettings.TariffTrMixed) < 0.005) return "tr_mixed";
                 if (Math.Abs(price - UserSettings.TariffTrHigh) < 0.005) return "tr_high";
             }
-            else if (currency == "USD" && Math.Abs(price - UserSettings.TariffUsAvg) < 0.005)
+            else if (currency == "CNY")
             {
-                return "us_avg";
+                if (Math.Abs(price - UserSettings.TariffCnTier1) < 0.005) return "cn_t1";
+                if (Math.Abs(price - UserSettings.TariffCnTier2) < 0.005) return "cn_t2";
+                if (Math.Abs(price - UserSettings.TariffCnTier3) < 0.005) return "cn_t3";
             }
-            else if (currency == "EUR" && Math.Abs(price - UserSettings.TariffEuAvg) < 0.005)
-            {
-                return "eu_avg";
-            }
-            else if (currency == "GBP" && Math.Abs(price - UserSettings.TariffUkAvg) < 0.005)
-            {
-                return "uk_avg";
-            }
+            else if (currency == "USD" && Math.Abs(price - UserSettings.TariffUsAvg) < 0.005) return "us_avg";
+            else if (currency == "EUR" && Math.Abs(price - UserSettings.TariffEuAvg) < 0.005) return "eu_avg";
+            else if (currency == "GBP" && Math.Abs(price - UserSettings.TariffUkAvg) < 0.005) return "uk_avg";
+
             return string.IsNullOrEmpty(fallback) ? "custom" : fallback;
         }
     }
@@ -1238,7 +1220,9 @@ namespace PCUptime
         private const int HitProfLight = 4;
         private const int HitProfAvg = 5;
         private const int HitProfHeavy = 6;
-        private const int HitLangToggle = 7;
+        private const int HitLangTr = 7;
+        private const int HitLangEn = 8;
+        private const int HitLangZh = 9;
 
         private static readonly Color ColBg = Color.FromArgb(13, 17, 23);
         private static readonly Color ColCard = Color.FromArgb(22, 27, 34);
@@ -1289,7 +1273,10 @@ namespace PCUptime
         private DateTime _copiedUntil = DateTime.MinValue;
         private bool _isCopiedState;
 
-        private RectangleF _langToggleRect;
+        private RectangleF _langPillRect;
+        private RectangleF _langTrRect;
+        private RectangleF _langEnRect;
+        private RectangleF _langZhRect;
         private RectangleF _btnCopyRect;
         private RectangleF _btnPinRect;
         private RectangleF _btnTrayRect;
@@ -1304,6 +1291,7 @@ namespace PCUptime
         private Font _fontHeader;
         private Font _fontMachine;
         private Font _fontLang;
+        private Font _fontLangZh;
         private Font _fontHeroNum;
         private Font _fontHeroUnit;
         private Font _fontHeroSub;
@@ -1347,8 +1335,7 @@ namespace PCUptime
             _hardware = new HardwareInfo();
 
             _appIcon = LoadAppIcon();
-            if (_appIcon != null)
-                Icon = _appIcon;
+            if (_appIcon != null) Icon = _appIcon;
 
             _miShow = new ToolStripMenuItem("", null, delegate { RestoreFromTray(); });
             _miCopy = new ToolStripMenuItem("", null, delegate { CopyUptimeToClipboard(); });
@@ -1392,6 +1379,12 @@ namespace PCUptime
                 _settings.TariffKey = "tr_mixed";
                 _settings.CurrencyCode = "TL";
             }
+            else if (_launch.ForcePreset == "cn")
+            {
+                _settings.PricePerKwh = UserSettings.TariffCnTier1;
+                _settings.TariffKey = "cn_t1";
+                _settings.CurrencyCode = "CNY";
+            }
             else if (_launch.ForcePreset == "us")
             {
                 _settings.PricePerKwh = UserSettings.TariffUsAvg;
@@ -1408,11 +1401,10 @@ namespace PCUptime
 
         private void ApplyLocalizedChrome()
         {
-            bool tr = _settings.IsTurkish;
-            Text = tr ? "PC Çalışma Süresi" : "PC Uptime & Power Cost";
-            _miShow.Text = tr ? "Pencereyi Göster" : "Show Window";
-            _miCopy.Text = tr ? "Özeti Kopyala" : "Copy Summary";
-            _miExit.Text = tr ? "Çıkış" : "Exit";
+            Text = _settings.T("PC Uptime & Power Cost", "PC Çalışma Süresi", "电脑运行时间与电费估算");
+            _miShow.Text = _settings.T("Show Window", "Pencereyi Göster", "显示窗口");
+            _miCopy.Text = _settings.T("Copy Summary", "Özeti Kopyala", "复制摘要");
+            _miExit.Text = _settings.T("Exit", "Çıkış", "退出");
         }
 
         private void SaveSettingsIfAllowed()
@@ -1421,21 +1413,10 @@ namespace PCUptime
                 _settings.Save();
         }
 
-        protected override void OnShown(EventArgs e)
-        {
-            base.OnShown(e);
-        }
-
         private void StartHardwareDetectionAsync()
         {
             int monitorCount = 1;
-            try
-            {
-                monitorCount = Math.Max(1, Screen.AllScreens.Length);
-            }
-            catch
-            {
-            }
+            try { monitorCount = Math.Max(1, Screen.AllScreens.Length); } catch { }
 
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -1469,25 +1450,14 @@ namespace PCUptime
 
         private static Icon LoadAppIcon()
         {
-            try
-            {
-                Icon extracted = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-                if (extracted != null)
-                    return extracted;
-            }
-            catch
-            {
-            }
-
-            return null;
+            try { return Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
+            catch { return null; }
         }
 
         private float GetInitialDpi()
         {
             using (Graphics g = CreateGraphics())
-            {
                 return g.DpiX > 0 ? g.DpiX : 96f;
-            }
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -1525,7 +1495,6 @@ namespace PCUptime
                     Invalidate();
                 }
             }
-
             base.WndProc(ref m);
         }
 
@@ -1536,43 +1505,34 @@ namespace PCUptime
             UpdateInteractiveRects();
         }
 
-        private int S(float logical)
-        {
-            return (int)Math.Round(logical * _scale);
-        }
-
-        private float Sf(float logical)
-        {
-            return logical * _scale;
-        }
-
-        private float PtToPx(float pt)
-        {
-            return pt * (96f / 72f) * _scale;
-        }
+        private int S(float logical) { return (int)Math.Round(logical * _scale); }
+        private float Sf(float logical) { return logical * _scale; }
+        private float PtToPx(float pt) { return pt * (96f / 72f) * _scale; }
 
         private void RebuildFonts()
         {
             DisposeFonts();
-            _fontHeader = new Font("Segoe UI", PtToPx(8.4f), FontStyle.Bold, GraphicsUnit.Pixel);
-            _fontMachine = new Font("Segoe UI", PtToPx(8.3f), FontStyle.Regular, GraphicsUnit.Pixel);
-            _fontLang = new Font("Segoe UI", PtToPx(7.4f), FontStyle.Bold, GraphicsUnit.Pixel);
+            string fam = _settings.UiFontFamily;
+            _fontHeader = new Font(fam, PtToPx(8.4f), FontStyle.Bold, GraphicsUnit.Pixel);
+            _fontMachine = new Font("Segoe UI", PtToPx(8.2f), FontStyle.Regular, GraphicsUnit.Pixel);
+            _fontLang = new Font("Segoe UI", PtToPx(7.3f), FontStyle.Bold, GraphicsUnit.Pixel);
+            _fontLangZh = new Font("Microsoft YaHei UI", PtToPx(7.3f), FontStyle.Bold, GraphicsUnit.Pixel);
             _fontHeroNum = new Font("Segoe UI", PtToPx(29.5f), FontStyle.Bold, GraphicsUnit.Pixel);
-            _fontHeroUnit = new Font("Segoe UI", PtToPx(14f), FontStyle.Bold, GraphicsUnit.Pixel);
-            _fontHeroSub = new Font("Segoe UI", PtToPx(9f), FontStyle.Regular, GraphicsUnit.Pixel);
+            _fontHeroUnit = new Font(fam, PtToPx(14f), FontStyle.Bold, GraphicsUnit.Pixel);
+            _fontHeroSub = new Font(fam, PtToPx(9f), FontStyle.Regular, GraphicsUnit.Pixel);
             _fontTileNum = new Font("Segoe UI", PtToPx(20.5f), FontStyle.Bold, GraphicsUnit.Pixel);
-            _fontTileLabel = new Font("Segoe UI", PtToPx(7.3f), FontStyle.Bold, GraphicsUnit.Pixel);
-            _fontInfoLabel = new Font("Segoe UI", PtToPx(7.1f), FontStyle.Bold, GraphicsUnit.Pixel);
-            _fontInfoValue = new Font("Segoe UI", PtToPx(10.2f), FontStyle.Bold, GraphicsUnit.Pixel);
+            _fontTileLabel = new Font(fam, PtToPx(7.4f), FontStyle.Bold, GraphicsUnit.Pixel);
+            _fontInfoLabel = new Font(fam, PtToPx(7.2f), FontStyle.Bold, GraphicsUnit.Pixel);
+            _fontInfoValue = new Font(fam, PtToPx(10.2f), FontStyle.Bold, GraphicsUnit.Pixel);
             _fontCostNum = new Font("Segoe UI", PtToPx(25f), FontStyle.Bold, GraphicsUnit.Pixel);
-            _fontCostUnit = new Font("Segoe UI", PtToPx(12.5f), FontStyle.Bold, GraphicsUnit.Pixel);
+            _fontCostUnit = new Font(fam, PtToPx(12.5f), FontStyle.Bold, GraphicsUnit.Pixel);
             _fontCostDetail = new Font("Segoe UI", PtToPx(9.4f), FontStyle.Bold, GraphicsUnit.Pixel);
-            _fontCostSub = new Font("Segoe UI", PtToPx(8.3f), FontStyle.Regular, GraphicsUnit.Pixel);
-            _fontPill = new Font("Segoe UI", PtToPx(7.7f), FontStyle.Bold, GraphicsUnit.Pixel);
-            _fontSeg = new Font("Segoe UI", PtToPx(8.0f), FontStyle.Bold, GraphicsUnit.Pixel);
-            _fontHwTag = new Font("Segoe UI", PtToPx(7.3f), FontStyle.Bold, GraphicsUnit.Pixel);
-            _fontHwVal = new Font("Segoe UI", PtToPx(8.5f), FontStyle.Regular, GraphicsUnit.Pixel);
-            _fontButton = new Font("Segoe UI", PtToPx(8.6f), FontStyle.Bold, GraphicsUnit.Pixel);
+            _fontCostSub = new Font(fam, PtToPx(8.2f), FontStyle.Regular, GraphicsUnit.Pixel);
+            _fontPill = new Font(fam, PtToPx(7.7f), FontStyle.Bold, GraphicsUnit.Pixel);
+            _fontSeg = new Font(fam, PtToPx(8.0f), FontStyle.Bold, GraphicsUnit.Pixel);
+            _fontHwTag = new Font(fam, PtToPx(7.3f), FontStyle.Bold, GraphicsUnit.Pixel);
+            _fontHwVal = new Font(fam, PtToPx(8.5f), FontStyle.Regular, GraphicsUnit.Pixel);
+            _fontButton = new Font(fam, PtToPx(8.6f), FontStyle.Bold, GraphicsUnit.Pixel);
         }
 
         private void DisposeFonts()
@@ -1580,6 +1540,7 @@ namespace PCUptime
             DisposeObj(ref _fontHeader);
             DisposeObj(ref _fontMachine);
             DisposeObj(ref _fontLang);
+            DisposeObj(ref _fontLangZh);
             DisposeObj(ref _fontHeroNum);
             DisposeObj(ref _fontHeroUnit);
             DisposeObj(ref _fontHeroSub);
@@ -1600,17 +1561,21 @@ namespace PCUptime
 
         private static void DisposeObj<T>(ref T obj) where T : class, IDisposable
         {
-            if (obj != null)
-            {
-                obj.Dispose();
-                obj = null;
-            }
+            if (obj != null) { obj.Dispose(); obj = null; }
         }
 
         private void UpdateInteractiveRects()
         {
-            _langToggleRect = new RectangleF(Sf(402f), Sf(14f), Sf(58f), Sf(21f));
-            _tariffPillRect = new RectangleF(Sf(290f), Sf(283f), Sf(156f), Sf(23f));
+            // 3-segment language switcher: TR | EN | 中文
+            _langPillRect = new RectangleF(Sf(364f), Sf(14f), Sf(96f), Sf(21f));
+            float wTr = Sf(29f);
+            float wEn = Sf(29f);
+            float wZh = _langPillRect.Width - wTr - wEn;
+            _langTrRect = new RectangleF(_langPillRect.X, _langPillRect.Y, wTr, _langPillRect.Height);
+            _langEnRect = new RectangleF(_langTrRect.Right, _langPillRect.Y, wEn, _langPillRect.Height);
+            _langZhRect = new RectangleF(_langEnRect.Right, _langPillRect.Y, wZh, _langPillRect.Height);
+
+            _tariffPillRect = new RectangleF(Sf(282f), Sf(283f), Sf(164f), Sf(23f));
 
             float segY = Sf(364f);
             float segH = Sf(26f);
@@ -1636,8 +1601,7 @@ namespace PCUptime
 
         private int GetActiveWatts()
         {
-            if (_settings.CustomWatts > 0)
-                return _settings.CustomWatts;
+            if (_settings.CustomWatts > 0) return _settings.CustomWatts;
             return _hardware.GetEstimatedWallWatts(_settings.Profile, _settings.IncludeMonitors);
         }
 
@@ -1649,29 +1613,19 @@ namespace PCUptime
             return (awakeHours * watts + sleepHours * 4.0) / 1000.0;
         }
 
-        private double CalculateTotalCost()
-        {
-            return CalculateTotalKwh() * _settings.PricePerKwh;
-        }
-
-        private double CalculateHourlyCost()
-        {
-            return (GetActiveWatts() / 1000.0) * _settings.PricePerKwh;
-        }
+        private double CalculateTotalCost() { return CalculateTotalKwh() * _settings.PricePerKwh; }
+        private double CalculateHourlyCost() { return (GetActiveWatts() / 1000.0) * _settings.PricePerKwh; }
 
         private void TickTimer_Tick(object sender, EventArgs e)
         {
             bool needRepaint = RefreshUptimeData(false);
-
             bool copiedNow = DateTime.UtcNow < _copiedUntil;
             if (copiedNow != _isCopiedState)
             {
                 _isCopiedState = copiedNow;
                 needRepaint = true;
             }
-
-            if (needRepaint && Visible)
-                Invalidate();
+            if (needRepaint && Visible) Invalidate();
         }
 
         private bool RefreshUptimeData(bool forceBootCalc)
@@ -1703,9 +1657,7 @@ namespace PCUptime
 
             DateTime calcBoot = DateTime.Now - _uptime;
             if (forceBootCalc || Math.Abs((calcBoot - _bootTime).TotalSeconds) > 5.0)
-            {
                 _bootTime = calcBoot;
-            }
 
             long wholeSecond = (long)_uptime.TotalSeconds;
             if (wholeSecond != _lastRenderedSecond || forceBootCalc)
@@ -1714,40 +1666,35 @@ namespace PCUptime
                 UpdateTrayTooltip();
                 return true;
             }
-
             return false;
         }
 
         private void UpdateTrayTooltip()
         {
-            if (_trayIcon == null)
-                return;
-
+            if (_trayIcon == null) return;
             CultureInfo c = _settings.ActiveCulture;
             string hoursText = FormatHoursShort(_uptime.TotalHours, c);
             string costText = _settings.FormatCompactMoney(CalculateTotalCost(), "N2");
-            string tip = _settings.IsTurkish
-                ? string.Format(c, "PC Açık: {0} saat | ~{1}", hoursText, costText)
-                : string.Format(c, "PC Uptime: {0} hrs | ~{1}", hoursText, costText);
+            string tip;
+            if (_settings.IsTurkish)
+                tip = string.Format(c, "PC Açık: {0} saat | ~{1}", hoursText, costText);
+            else if (_settings.IsChinese)
+                tip = string.Format(c, "电脑已运行: {0} 小时 | ~{1}", hoursText, costText);
+            else
+                tip = string.Format(c, "PC Uptime: {0} hrs | ~{1}", hoursText, costText);
 
-            if (tip.Length > 63)
-                tip = tip.Substring(0, 63);
-
+            if (tip.Length > 63) tip = tip.Substring(0, 63);
             _trayIcon.Text = tip;
         }
 
         private static string FormatHoursValue(double totalHours, CultureInfo c)
         {
-            if (totalHours >= 1000.0)
-                return totalHours.ToString("N1", c);
-            return totalHours.ToString("N2", c);
+            return totalHours >= 1000.0 ? totalHours.ToString("N1", c) : totalHours.ToString("N2", c);
         }
 
         private static string FormatHoursShort(double totalHours, CultureInfo c)
         {
-            if (totalHours >= 100.0)
-                return totalHours.ToString("N1", c);
-            return totalHours.ToString("N2", c);
+            return totalHours >= 100.0 ? totalHours.ToString("N1", c) : totalHours.ToString("N2", c);
         }
 
         private string FormatHumanSentence(TimeSpan ts)
@@ -1756,43 +1703,35 @@ namespace PCUptime
             StringBuilder sb = new StringBuilder();
             if (_settings.IsTurkish)
             {
-                if (ts.Days > 0)
-                    sb.AppendFormat(c, "{0} gün ", ts.Days);
-                if (ts.Days > 0 || ts.Hours > 0)
-                    sb.AppendFormat(c, "{0} saat ", ts.Hours);
-                if (ts.Days > 0 || ts.Hours > 0 || ts.Minutes > 0)
-                    sb.AppendFormat(c, "{0} dakika ", ts.Minutes);
-
+                if (ts.Days > 0) sb.AppendFormat(c, "{0} gün ", ts.Days);
+                if (ts.Days > 0 || ts.Hours > 0) sb.AppendFormat(c, "{0} saat ", ts.Hours);
+                if (ts.Days > 0 || ts.Hours > 0 || ts.Minutes > 0) sb.AppendFormat(c, "{0} dakika ", ts.Minutes);
                 sb.AppendFormat(c, "{0:D2} saniyedir açık", ts.Seconds);
+            }
+            else if (_settings.IsChinese)
+            {
+                sb.Append("已连续运行 ");
+                if (ts.Days > 0) sb.AppendFormat(c, "{0} 天 ", ts.Days);
+                if (ts.Days > 0 || ts.Hours > 0) sb.AppendFormat(c, "{0} 小时 ", ts.Hours);
+                if (ts.Days > 0 || ts.Hours > 0 || ts.Minutes > 0) sb.AppendFormat(c, "{0} 分 ", ts.Minutes);
+                sb.AppendFormat(c, "{0:D2} 秒", ts.Seconds);
             }
             else
             {
                 sb.Append("Up for ");
-                if (ts.Days > 0)
-                    sb.AppendFormat(c, "{0} {1} ", ts.Days, ts.Days == 1 ? "day" : "days");
-                if (ts.Days > 0 || ts.Hours > 0)
-                    sb.AppendFormat(c, "{0} hr ", ts.Hours);
-                if (ts.Days > 0 || ts.Hours > 0 || ts.Minutes > 0)
-                    sb.AppendFormat(c, "{0} min ", ts.Minutes);
-
+                if (ts.Days > 0) sb.AppendFormat(c, "{0} {1} ", ts.Days, ts.Days == 1 ? "day" : "days");
+                if (ts.Days > 0 || ts.Hours > 0) sb.AppendFormat(c, "{0} hr ", ts.Hours);
+                if (ts.Days > 0 || ts.Hours > 0 || ts.Minutes > 0) sb.AppendFormat(c, "{0} min ", ts.Minutes);
                 sb.AppendFormat(c, "{0:D2} sec", ts.Seconds);
             }
-
             return sb.ToString();
         }
 
         private string GetProfileName(UsageProfile p)
         {
-            if (_settings.IsTurkish)
-            {
-                if (p == UsageProfile.Light) return "Hafif";
-                if (p == UsageProfile.Heavy) return "Oyun/Yük";
-                return "Ortalama";
-            }
-
-            if (p == UsageProfile.Light) return "Light";
-            if (p == UsageProfile.Heavy) return "Gaming";
-            return "Average";
+            if (p == UsageProfile.Light) return _settings.T("Light", "Hafif", "轻度");
+            if (p == UsageProfile.Heavy) return _settings.T("Gaming", "Oyun/Yük", "游戏");
+            return _settings.T("Average", "Ortalama", "日常");
         }
 
         private void CopyUptimeToClipboard()
@@ -1800,13 +1739,12 @@ namespace PCUptime
             try
             {
                 CultureInfo c = _settings.ActiveCulture;
-                bool tr = _settings.IsTurkish;
                 double kwh = CalculateTotalKwh();
                 double cost = CalculateTotalCost();
                 int watts = GetActiveWatts();
 
                 StringBuilder sb = new StringBuilder();
-                if (tr)
+                if (_settings.IsTurkish)
                 {
                     sb.AppendFormat(c, "PC Çalışma Süresi: {0} saat ({1})", FormatHoursValue(_uptime.TotalHours, c), FormatHumanSentence(_uptime));
                     sb.AppendLine();
@@ -1814,19 +1752,32 @@ namespace PCUptime
                     if (_hasAwakeTime && Math.Abs((_uptime - _awakeTime).TotalMinutes) >= 1.0)
                         sb.AppendFormat(c, " | Aktif (Uyku Hariç): {0} saat", FormatHoursValue(_awakeTime.TotalHours, c));
                     sb.AppendLine();
-                    sb.AppendFormat(
-                        c,
-                        "Tahmini Elektrik Maliyeti: {0} ({1:N2} kWh | ~{2} W {3} | {4})",
-                        _settings.FormatCompactMoney(cost, "N2"),
-                        kwh,
-                        watts,
+                    sb.AppendFormat(c, "Tahmini Elektrik Maliyeti: {0} ({1:N2} kWh | ~{2} W {3} | {4})",
+                        _settings.FormatCompactMoney(cost, "N2"), kwh, watts,
                         _settings.CustomWatts > 0 ? "Özel" : GetProfileName(_settings.Profile),
                         _settings.FormatRatePerKwh());
-
                     if (_hardware.IsDetected)
                     {
                         sb.AppendLine();
-                        sb.AppendFormat(c, "Donanım: {0} · {1} · {2}", _hardware.CpuName, _hardware.GpuName, _hardware.BuildSystemSummary(true, c));
+                        sb.AppendFormat(c, "Donanım: {0} · {1} · {2}", _hardware.CpuName, _hardware.GpuName, _hardware.BuildSystemSummary(_settings));
+                    }
+                }
+                else if (_settings.IsChinese)
+                {
+                    sb.AppendFormat(c, "电脑运行时间: {0} 小时 ({1})", FormatHoursValue(_uptime.TotalHours, c), FormatHumanSentence(_uptime));
+                    sb.AppendLine();
+                    sb.AppendFormat(c, "上次开机时间: {0:yyyy-MM-dd HH:mm:ss}", _bootTime);
+                    if (_hasAwakeTime && Math.Abs((_uptime - _awakeTime).TotalMinutes) >= 1.0)
+                        sb.AppendFormat(c, " | 活跃时间 (不含休眠): {0} 小时", FormatHoursValue(_awakeTime.TotalHours, c));
+                    sb.AppendLine();
+                    sb.AppendFormat(c, "预估电费支出: {0} ({1:N2} 度 | ~{2} W {3} | {4})",
+                        _settings.FormatCompactMoney(cost, "N2"), kwh, watts,
+                        _settings.CustomWatts > 0 ? "自定义" : GetProfileName(_settings.Profile),
+                        _settings.FormatRatePerKwh());
+                    if (_hardware.IsDetected)
+                    {
+                        sb.AppendLine();
+                        sb.AppendFormat(c, "硬件配置: {0} · {1} · {2}", _hardware.CpuName, _hardware.GpuName, _hardware.BuildSystemSummary(_settings));
                     }
                 }
                 else
@@ -1837,19 +1788,14 @@ namespace PCUptime
                     if (_hasAwakeTime && Math.Abs((_uptime - _awakeTime).TotalMinutes) >= 1.0)
                         sb.AppendFormat(c, " | Active (excl. sleep): {0} hours", FormatHoursValue(_awakeTime.TotalHours, c));
                     sb.AppendLine();
-                    sb.AppendFormat(
-                        c,
-                        "Estimated Electricity Cost: {0} ({1:N2} kWh | ~{2} W {3} | {4})",
-                        _settings.FormatCompactMoney(cost, "N2"),
-                        kwh,
-                        watts,
+                    sb.AppendFormat(c, "Estimated Electricity Cost: {0} ({1:N2} kWh | ~{2} W {3} | {4})",
+                        _settings.FormatCompactMoney(cost, "N2"), kwh, watts,
                         _settings.CustomWatts > 0 ? "Custom" : GetProfileName(_settings.Profile),
                         _settings.FormatRatePerKwh());
-
                     if (_hardware.IsDetected)
                     {
                         sb.AppendLine();
-                        sb.AppendFormat(c, "Hardware: {0} · {1} · {2}", _hardware.CpuName, _hardware.GpuName, _hardware.BuildSystemSummary(false, c));
+                        sb.AppendFormat(c, "Hardware: {0} · {1} · {2}", _hardware.CpuName, _hardware.GpuName, _hardware.BuildSystemSummary(_settings));
                     }
                 }
 
@@ -1863,13 +1809,23 @@ namespace PCUptime
             }
         }
 
-        private void ToggleLanguage()
+        private void SetLanguage(string lang)
         {
-            _settings.Language = _settings.IsTurkish ? "en" : "tr";
+            if (string.Equals(_settings.Language, lang, StringComparison.OrdinalIgnoreCase))
+                return;
+            _settings.Language = lang;
             SaveSettingsIfAllowed();
+            RebuildFonts();
             ApplyLocalizedChrome();
             UpdateTrayTooltip();
             Invalidate();
+        }
+
+        private void CycleLanguage()
+        {
+            if (_settings.IsTurkish) SetLanguage("en");
+            else if (_settings.IsChinese) SetLanguage("tr");
+            else SetLanguage("zh");
         }
 
         private void OpenTariffSettings()
@@ -1903,11 +1859,7 @@ namespace PCUptime
             }
         }
 
-        private void ToggleTopMost()
-        {
-            TopMost = !TopMost;
-            Invalidate();
-        }
+        private void ToggleTopMost() { TopMost = !TopMost; Invalidate(); }
 
         private void MinimizeToTray()
         {
@@ -1919,8 +1871,7 @@ namespace PCUptime
         private void RestoreFromTray()
         {
             Show();
-            if (WindowState == FormWindowState.Minimized)
-                WindowState = FormWindowState.Normal;
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             Activate();
             _trayIcon.Visible = false;
             RefreshUptimeData(false);
@@ -1929,13 +1880,14 @@ namespace PCUptime
 
         private void TrayIcon_MouseClick(object sender, MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left)
-                RestoreFromTray();
+            if (e.Button == MouseButtons.Left) RestoreFromTray();
         }
 
         private int HitTest(Point pt)
         {
-            if (_langToggleRect.Contains(pt)) return HitLangToggle;
+            if (_langTrRect.Contains(pt)) return HitLangTr;
+            if (_langEnRect.Contains(pt)) return HitLangEn;
+            if (_langZhRect.Contains(pt)) return HitLangZh;
             if (_btnCopyRect.Contains(pt)) return HitBtnCopy;
             if (_btnPinRect.Contains(pt)) return HitBtnPin;
             if (_btnTrayRect.Contains(pt)) return HitBtnTray;
@@ -1976,11 +1928,7 @@ namespace PCUptime
             if (e.Button == MouseButtons.Left)
             {
                 int hit = HitTest(e.Location);
-                if (hit != _pressedHit)
-                {
-                    _pressedHit = hit;
-                    Invalidate();
-                }
+                if (hit != _pressedHit) { _pressedHit = hit; Invalidate(); }
             }
         }
 
@@ -1995,7 +1943,9 @@ namespace PCUptime
 
                 if (wasPressed != HitNone && wasPressed == releasedOn)
                 {
-                    if (wasPressed == HitLangToggle) ToggleLanguage();
+                    if (wasPressed == HitLangTr) SetLanguage("tr");
+                    else if (wasPressed == HitLangEn) SetLanguage("en");
+                    else if (wasPressed == HitLangZh) SetLanguage("zh");
                     else if (wasPressed == HitBtnCopy) CopyUptimeToClipboard();
                     else if (wasPressed == HitBtnPin) ToggleTopMost();
                     else if (wasPressed == HitBtnTray) MinimizeToTray();
@@ -2004,7 +1954,6 @@ namespace PCUptime
                     else if (wasPressed == HitProfAvg) SelectProfile(UsageProfile.Average);
                     else if (wasPressed == HitProfHeavy) SelectProfile(UsageProfile.Heavy);
                 }
-
                 Invalidate();
             }
         }
@@ -2012,26 +1961,10 @@ namespace PCUptime
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
-            if (e.Control && e.KeyCode == Keys.C)
-            {
-                CopyUptimeToClipboard();
-                e.Handled = true;
-            }
-            else if (!e.Control && !e.Alt && e.KeyCode == Keys.T)
-            {
-                ToggleTopMost();
-                e.Handled = true;
-            }
-            else if (!e.Control && !e.Alt && e.KeyCode == Keys.H)
-            {
-                MinimizeToTray();
-                e.Handled = true;
-            }
-            else if (!e.Control && !e.Alt && e.KeyCode == Keys.L)
-            {
-                ToggleLanguage();
-                e.Handled = true;
-            }
+            if (e.Control && e.KeyCode == Keys.C) { CopyUptimeToClipboard(); e.Handled = true; }
+            else if (!e.Control && !e.Alt && e.KeyCode == Keys.T) { ToggleTopMost(); e.Handled = true; }
+            else if (!e.Control && !e.Alt && e.KeyCode == Keys.H) { MinimizeToTray(); e.Handled = true; }
+            else if (!e.Control && !e.Alt && e.KeyCode == Keys.L) { CycleLanguage(); e.Handled = true; }
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -2040,7 +1973,6 @@ namespace PCUptime
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-
             g.Clear(ColBg);
 
             DrawHeader(g);
@@ -2053,7 +1985,6 @@ namespace PCUptime
 
         private void DrawHeader(Graphics g)
         {
-            bool tr = _settings.IsTurkish;
             float padX = Sf(20f);
             float centerY = Sf(24.5f);
 
@@ -2065,17 +1996,17 @@ namespace PCUptime
             using (SolidBrush dotBrush = new SolidBrush(ColAccent))
                 g.FillEllipse(dotBrush, padX + haloR - dotR, centerY - dotR, dotR * 2f, dotR * 2f);
 
-            RectangleF titleRect = new RectangleF(padX + Sf(19f), Sf(14f), Sf(210f), Sf(21f));
+            RectangleF titleRect = new RectangleF(padX + Sf(19f), Sf(14f), Sf(195f), Sf(21f));
             using (SolidBrush b = new SolidBrush(ColTextSecondary))
             using (StringFormat sf = new StringFormat())
             {
                 sf.LineAlignment = StringAlignment.Center;
                 sf.Alignment = StringAlignment.Near;
-                g.DrawString(tr ? "SİSTEM ÇALIŞMA SÜRESİ" : "SYSTEM UPTIME", _fontHeader, b, titleRect, sf);
+                g.DrawString(_settings.T("SYSTEM UPTIME", "SİSTEM ÇALIŞMA SÜRESİ", "系统运行时间"), _fontHeader, b, titleRect, sf);
             }
 
             string machineName = _launch.DemoMode ? "WORKSTATION" : Environment.MachineName;
-            RectangleF machineRect = new RectangleF(Sf(248f), Sf(14f), Sf(144f), Sf(21f));
+            RectangleF machineRect = new RectangleF(Sf(232f), Sf(14f), Sf(122f), Sf(21f));
             using (SolidBrush b = new SolidBrush(ColTextMuted))
             using (StringFormat sf = new StringFormat())
             {
@@ -2086,26 +2017,23 @@ namespace PCUptime
                 g.DrawString(machineName, _fontMachine, b, machineRect, sf);
             }
 
-            // TR | EN Language Switcher Pill
-            bool langHover = _hoverHit == HitLangToggle;
-            Color langBg = langHover ? ColBtnHover : ColCard;
-            Color langBorder = langHover ? Color.FromArgb(72, 85, 104) : ColCardBorder;
-            DrawRoundedCard(g, _langToggleRect, Sf(6f), langBg, langBorder);
+            // 3-Way Language Pill: TR | EN | 中文
+            bool anyLangHover = _hoverHit == HitLangTr || _hoverHit == HitLangEn || _hoverHit == HitLangZh;
+            DrawRoundedCard(g, _langPillRect, Sf(6f), anyLangHover ? ColBtnHover : ColCard, anyLangHover ? Color.FromArgb(72, 85, 104) : ColCardBorder);
 
-            float halfW = _langToggleRect.Width * 0.5f;
-            RectangleF trRect = new RectangleF(_langToggleRect.X + Sf(2f), _langToggleRect.Y, halfW - Sf(2f), _langToggleRect.Height);
-            RectangleF enRect = new RectangleF(_langToggleRect.X + halfW, _langToggleRect.Y, halfW - Sf(2f), _langToggleRect.Height);
-
-            using (SolidBrush trB = new SolidBrush(tr ? ColAccent : ColTextMuted))
-            using (SolidBrush enB = new SolidBrush(!tr ? ColAccent : ColTextMuted))
+            using (SolidBrush bTr = new SolidBrush(_settings.IsTurkish ? ColAccent : (_hoverHit == HitLangTr ? ColTextPrimary : ColTextMuted)))
+            using (SolidBrush bEn = new SolidBrush((!_settings.IsTurkish && !_settings.IsChinese) ? ColAccent : (_hoverHit == HitLangEn ? ColTextPrimary : ColTextMuted)))
+            using (SolidBrush bZh = new SolidBrush(_settings.IsChinese ? ColAccent : (_hoverHit == HitLangZh ? ColTextPrimary : ColTextMuted)))
             using (Pen sep = new Pen(ColDivider, 1f))
             using (StringFormat sf = new StringFormat())
             {
                 sf.Alignment = StringAlignment.Center;
                 sf.LineAlignment = StringAlignment.Center;
-                g.DrawString("TR", _fontLang, trB, trRect, sf);
-                g.DrawString("EN", _fontLang, enB, enRect, sf);
-                g.DrawLine(sep, _langToggleRect.X + halfW, _langToggleRect.Y + Sf(4f), _langToggleRect.X + halfW, _langToggleRect.Bottom - Sf(4f));
+                g.DrawString("TR", _fontLang, bTr, _langTrRect, sf);
+                g.DrawString("EN", _fontLang, bEn, _langEnRect, sf);
+                g.DrawString("中文", _fontLangZh, bZh, _langZhRect, sf);
+                g.DrawLine(sep, _langTrRect.Right, _langPillRect.Y + Sf(4f), _langTrRect.Right, _langPillRect.Bottom - Sf(4f));
+                g.DrawLine(sep, _langEnRect.Right, _langPillRect.Y + Sf(4f), _langEnRect.Right, _langPillRect.Bottom - Sf(4f));
             }
         }
 
@@ -2116,23 +2044,19 @@ namespace PCUptime
             DrawRoundedCard(g, card, Sf(12f), ColCard, ColCardBorder);
 
             string numText = FormatHoursValue(_uptime.TotalHours, c);
-            string unitText = _settings.IsTurkish ? "saat" : "hours";
+            string unitText = _settings.T("hours", "saat", "小时");
             float unitGap = Sf(6f);
 
             using (StringFormat typo = new StringFormat(StringFormat.GenericTypographic))
             {
                 typo.FormatFlags |= StringFormatFlags.NoWrap;
-
                 SizeF numSize = g.MeasureString(numText, _fontHeroNum, PointF.Empty, typo);
                 SizeF unitSize = g.MeasureString(unitText, _fontHeroUnit, PointF.Empty, typo);
 
                 float totalW = numSize.Width + unitGap + unitSize.Width;
                 float startX = card.X + (card.Width - totalW) * 0.5f;
                 float numY = card.Y + Sf(9f);
-
-                float ascentNum = GetFontAscentPx(_fontHeroNum);
-                float ascentUnit = GetFontAscentPx(_fontHeroUnit);
-                float unitY = numY + ascentNum - ascentUnit;
+                float unitY = numY + GetFontAscentPx(_fontHeroNum) - GetFontAscentPx(_fontHeroUnit);
 
                 using (SolidBrush numBrush = new SolidBrush(ColTextPrimary))
                 using (SolidBrush unitBrush = new SolidBrush(ColAccent))
@@ -2169,9 +2093,11 @@ namespace PCUptime
                 _uptime.Minutes.ToString("D2", c),
                 _uptime.Seconds.ToString("D2", c)
             };
-            string[] labels = _settings.IsTurkish
-                ? new string[] { "GÜN", "SAAT", "DAKİKA", "SANİYE" }
-                : new string[] { "DAYS", "HOURS", "MINUTES", "SECONDS" };
+
+            string[] labels;
+            if (_settings.IsTurkish) labels = new string[] { "GÜN", "SAAT", "DAKİKA", "SANİYE" };
+            else if (_settings.IsChinese) labels = new string[] { "天", "小时", "分钟", "秒" };
+            else labels = new string[] { "DAYS", "HOURS", "MINUTES", "SECONDS" };
 
             for (int i = 0; i < 4; i++)
             {
@@ -2179,10 +2105,8 @@ namespace PCUptime
                 DrawRoundedCard(g, rect, Sf(10f), ColCard, ColCardBorder);
 
                 Color valColor = ColTextPrimary;
-                if (i == 0 && _uptime.Days == 0)
-                    valColor = ColTextDim;
-                else if (i == 3)
-                    valColor = ColAccentSoft;
+                if (i == 0 && _uptime.Days == 0) valColor = ColTextDim;
+                else if (i == 3) valColor = ColAccentSoft;
 
                 RectangleF numRect = new RectangleF(rect.X, rect.Y + Sf(8f), rect.Width, Sf(34f));
                 using (SolidBrush b = new SolidBrush(valColor))
@@ -2207,7 +2131,6 @@ namespace PCUptime
         private void DrawInfoCards(Graphics g)
         {
             CultureInfo c = _settings.ActiveCulture;
-            bool tr = _settings.IsTurkish;
             float y = Sf(214f);
             float h = Sf(50f);
             float w = Sf(215f);
@@ -2216,23 +2139,21 @@ namespace PCUptime
             RectangleF leftCard = new RectangleF(Sf(20f), y, w, h);
             RectangleF rightCard = new RectangleF(Sf(20f) + w + gap, y, w, h);
 
-            string bootText = tr
+            string bootText = _settings.IsTurkish
                 ? _bootTime.ToString("dd.MM.yyyy  HH:mm:ss", c)
                 : _bootTime.ToString("yyyy-MM-dd  HH:mm:ss", c);
 
             DrawSingleInfoCard(
-                g,
-                leftCard,
-                tr ? "SON AÇILIŞ ZAMANI" : "LAST BOOT TIME",
+                g, leftCard,
+                _settings.T("LAST BOOT TIME", "SON AÇILIŞ ZAMANI", "上次开机时间"),
                 bootText,
                 ColTextPrimary);
 
-            string awakeValue = string.Format(c, "{0} {1}", FormatHoursValue(_awakeTime.TotalHours, c), tr ? "saat" : "hours");
+            string awakeValue = string.Format(c, "{0} {1}", FormatHoursValue(_awakeTime.TotalHours, c), _settings.T("hours", "saat", "小时"));
             bool hasSleepDiff = _hasAwakeTime && Math.Abs((_uptime - _awakeTime).TotalMinutes) >= 1.0;
             DrawSingleInfoCard(
-                g,
-                rightCard,
-                tr ? "AKTİF SÜRE (UYKU HARİÇ)" : "ACTIVE TIME (EXCL. SLEEP)",
+                g, rightCard,
+                _settings.T("ACTIVE TIME (EXCL. SLEEP)", "AKTİF SÜRE (UYKU HARİÇ)", "活跃时间 (不含休眠)"),
                 awakeValue,
                 hasSleepDiff ? ColAccent : ColTextPrimary);
         }
@@ -2240,7 +2161,6 @@ namespace PCUptime
         private void DrawSingleInfoCard(Graphics g, RectangleF rect, string label, string value, Color valueColor)
         {
             DrawRoundedCard(g, rect, Sf(10f), ColCard, ColCardBorder);
-
             float padX = Sf(13f);
             RectangleF lblRect = new RectangleF(rect.X + padX, rect.Y + Sf(6f), rect.Width - padX * 2f, Sf(15f));
             RectangleF valRect = new RectangleF(rect.X + padX, rect.Y + Sf(22f), rect.Width - padX * 2f, Sf(21f));
@@ -2253,7 +2173,6 @@ namespace PCUptime
                 sf.LineAlignment = StringAlignment.Center;
                 sf.FormatFlags = StringFormatFlags.NoWrap;
                 sf.Trimming = StringTrimming.EllipsisCharacter;
-
                 g.DrawString(label, _fontInfoLabel, lb, lblRect, sf);
                 g.DrawString(value, _fontInfoValue, vb, valRect, sf);
             }
@@ -2262,28 +2181,23 @@ namespace PCUptime
         private void DrawEnergyAndHardwareCard(Graphics g)
         {
             CultureInfo c = _settings.ActiveCulture;
-            bool tr = _settings.IsTurkish;
-
             RectangleF card = new RectangleF(Sf(20f), Sf(274f), Sf(440f), Sf(208f));
             DrawRoundedCard(g, card, Sf(12f), ColCard, ColEnergyBorder);
 
-            // 1. Header: Lightning bolt + title on left, clickable Tariff pill on right
             DrawLightningIcon(g, new RectangleF(Sf(34f), Sf(288f), Sf(12f), Sf(14f)), ColAmber);
 
-            RectangleF hdrRect = new RectangleF(Sf(50f), Sf(284f), Sf(235f), Sf(21f));
+            RectangleF hdrRect = new RectangleF(Sf(50f), Sf(284f), Sf(228f), Sf(21f));
             using (SolidBrush b = new SolidBrush(ColAmber))
             using (StringFormat sf = new StringFormat())
             {
                 sf.Alignment = StringAlignment.Near;
                 sf.LineAlignment = StringAlignment.Center;
-                g.DrawString(tr ? "TAHMİNİ ELEKTRİK MALİYETİ" : "ESTIMATED ELECTRICITY COST", _fontHeader, b, hdrRect, sf);
+                g.DrawString(_settings.T("ESTIMATED ELECTRICITY COST", "TAHMİNİ ELEKTRİK MALİYETİ", "预估电费支出"), _fontHeader, b, hdrRect, sf);
             }
 
             bool pillHover = _hoverHit == HitTariffPill;
             bool pillPress = _pressedHit == HitTariffPill;
-            Color pillBg = pillPress ? ColBtnPress : (pillHover ? ColBtnHover : ColBtnNormal);
-            Color pillBorder = pillHover ? ColAmberDark : ColBtnBorder;
-            DrawRoundedCard(g, _tariffPillRect, Sf(6f), pillBg, pillBorder);
+            DrawRoundedCard(g, _tariffPillRect, Sf(6f), pillPress ? ColBtnPress : (pillHover ? ColBtnHover : ColBtnNormal), pillHover ? ColAmberDark : ColBtnBorder);
 
             string pillText = string.Format(c, "{0} · {1}", _settings.GetTariffDisplayLabel(), _settings.FormatRatePerKwh());
             RectangleF pillTextRect = new RectangleF(_tariffPillRect.X + Sf(7f), _tariffPillRect.Y, _tariffPillRect.Width - Sf(21f), _tariffPillRect.Height);
@@ -2304,23 +2218,21 @@ namespace PCUptime
                 cp.LineJoin = LineJoin.Round;
                 float cx = _tariffPillRect.Right - Sf(10.5f);
                 float cy = _tariffPillRect.Y + _tariffPillRect.Height * 0.5f;
-                PointF[] chev = new PointF[]
+                g.DrawLines(cp, new PointF[]
                 {
                     new PointF(cx - Sf(3.2f), cy - Sf(1.5f)),
                     new PointF(cx, cy + Sf(1.8f)),
                     new PointF(cx + Sf(3.2f), cy - Sf(1.5f))
-                };
-                g.DrawLines(cp, chev);
+                });
             }
 
-            // 2. Big Cost Display on left + kWh / Watt / Hourly Rate on right
             double totalCost = CalculateTotalCost();
             double totalKwh = CalculateTotalKwh();
             double hourlyCost = CalculateHourlyCost();
             int activeWatts = GetActiveWatts();
 
             string costNum = totalCost.ToString("N2", c);
-            string costUnit = _settings.CurrencyCode;
+            string costUnit = _settings.BigCurrencyUnit;
             float costUnitGap = Sf(5f);
 
             using (StringFormat typo = new StringFormat(StringFormat.GenericTypographic))
@@ -2339,19 +2251,17 @@ namespace PCUptime
                 }
             }
 
-            string lineTop = string.Format(
-                c,
-                "{0:N2} kWh  ·  {1}{2} W",
-                totalKwh,
-                _settings.CustomWatts > 0 ? "" : "~",
-                activeWatts);
+            string lineTop = string.Format(c, "{0:N2} {1}  ·  {2}{3} W",
+                totalKwh, _settings.IsChinese ? "度" : "kWh",
+                _settings.CustomWatts > 0 ? "" : "~", activeWatts);
 
             string hourlyStr = _settings.FormatCompactMoney(hourlyCost, "N2");
             double dailyCost = hourlyCost * 24.0;
             string dailyStr = _settings.FormatCompactMoney(dailyCost, dailyCost < 10.0 ? "N2" : "N1");
-            string lineBot = tr
-                ? string.Format(c, "Saatlik ~{0}/sa  ·  Günlük ~{1}", hourlyStr, dailyStr)
-                : string.Format(c, "Hourly ~{0}/hr  ·  Daily ~{1}", hourlyStr, dailyStr);
+            string lineBot;
+            if (_settings.IsTurkish) lineBot = string.Format(c, "Saatlik ~{0}/sa  ·  Günlük ~{1}", hourlyStr, dailyStr);
+            else if (_settings.IsChinese) lineBot = string.Format(c, "每小时 ~{0}  ·  每天 ~{1}", hourlyStr, dailyStr);
+            else lineBot = string.Format(c, "Hourly ~{0}/hr  ·  Daily ~{1}", hourlyStr, dailyStr);
 
             RectangleF rightTopRect = new RectangleF(Sf(224f), Sf(317f), Sf(222f), Sf(20f));
             RectangleF rightBotRect = new RectangleF(Sf(224f), Sf(337f), Sf(222f), Sf(18f));
@@ -2366,7 +2276,6 @@ namespace PCUptime
                 g.DrawString(lineBot, _fontCostSub, sb, rightBotRect, sf);
             }
 
-            // 3. Usage Profile Segmented Selector
             RectangleF trackRect = new RectangleF(Sf(34f), Sf(364f), Sf(412f), Sf(26f));
             DrawRoundedCard(g, trackRect, Sf(7f), ColTrackBg, ColDivider);
 
@@ -2375,46 +2284,42 @@ namespace PCUptime
             int wHeavy = _hardware.GetEstimatedWallWatts(UsageProfile.Heavy, _settings.IncludeMonitors);
 
             bool autoMode = (_settings.CustomWatts == 0);
-            DrawProfileSegment(g, _profLightRect, HitProfLight, string.Format(c, "{0} (~{1}W)", tr ? "Hafif" : "Light", wLight), autoMode && _settings.Profile == UsageProfile.Light);
-            DrawProfileSegment(g, _profAvgRect, HitProfAvg, string.Format(c, "{0} (~{1}W)", tr ? "Ortalama" : "Average", wAvg), autoMode && _settings.Profile == UsageProfile.Average);
-            DrawProfileSegment(g, _profHeavyRect, HitProfHeavy, string.Format(c, "{0} (~{1}W)", tr ? "Oyun/Yük" : "Gaming", wHeavy), autoMode && _settings.Profile == UsageProfile.Heavy);
+            DrawProfileSegment(g, _profLightRect, HitProfLight, string.Format(c, "{0} (~{1}W)", GetProfileName(UsageProfile.Light), wLight), autoMode && _settings.Profile == UsageProfile.Light);
+            DrawProfileSegment(g, _profAvgRect, HitProfAvg, string.Format(c, "{0} (~{1}W)", GetProfileName(UsageProfile.Average), wAvg), autoMode && _settings.Profile == UsageProfile.Average);
+            DrawProfileSegment(g, _profHeavyRect, HitProfHeavy, string.Format(c, "{0} (~{1}W)", GetProfileName(UsageProfile.Heavy), wHeavy), autoMode && _settings.Profile == UsageProfile.Heavy);
 
-            // 4. Divider
             using (Pen divPen = new Pen(ColDivider, 1f))
                 g.DrawLine(divPen, Sf(34f), Sf(400f), Sf(446f), Sf(400f));
 
-            // 5. Detected Hardware Specs
             string cpuVal = _hardware.IsDetected
-                ? string.Format(c, "{0} ({1} {2})", _hardware.CpuName, _hardware.CpuCores, tr ? "Çekirdek" : "Cores")
-                : (tr ? "Donanım bilgileri okunuyor..." : "Detecting hardware...");
+                ? string.Format(c, "{0} ({1} {2})", _hardware.CpuName, _hardware.CpuCores, _settings.T("Cores", "Çekirdek", "核"))
+                : _settings.T("Detecting hardware...", "Donanım bilgileri okunuyor...", "正在检测硬件信息...");
             string cpuTdp = _hardware.IsDetected ? string.Format(c, "{0}W TDP", _hardware.CpuTdpWatts) : "";
 
             string gpuVal = _hardware.IsDetected ? _hardware.GpuName : "...";
             string gpuTdp = _hardware.IsDetected
-                ? (_hardware.HasDiscreteGpu ? string.Format(c, "{0}W TDP", _hardware.GpuTdpWatts) : (tr ? "Dahili" : "Integrated"))
+                ? (_hardware.HasDiscreteGpu ? string.Format(c, "{0}W TDP", _hardware.GpuTdpWatts) : _settings.T("Integrated", "Dahili", "核显"))
                 : "";
 
-            string sysVal = _hardware.IsDetected ? _hardware.BuildSystemSummary(tr, c) : "...";
+            string sysVal = _hardware.IsDetected ? _hardware.BuildSystemSummary(_settings) : "...";
             string sysRight;
             if (_settings.CustomWatts > 0)
-                sysRight = string.Format(c, "{0}: {1}W", tr ? "Özel" : "Custom", _settings.CustomWatts);
+                sysRight = string.Format(c, "{0}: {1}W", _settings.T("Custom", "Özel", "自定义"), _settings.CustomWatts);
             else if (_settings.IncludeMonitors)
-                sysRight = tr ? "Monitör dahil" : "Monitors incl.";
+                sysRight = _settings.T("Monitors incl.", "Monitör dahil", "含显示器");
             else
-                sysRight = tr ? "Monitör hariç" : "Monitors excl.";
+                sysRight = _settings.T("Monitors excl.", "Monitör hariç", "不含显示器");
 
             DrawHardwareRow(g, Sf(408f), "CPU", cpuVal, cpuTdp, ColTextBody);
             DrawHardwareRow(g, Sf(431f), "GPU", gpuVal, gpuTdp, ColTextBody);
-            DrawHardwareRow(g, Sf(454f), tr ? "SİSTEM" : "SYSTEM", sysVal, sysRight, ColTextSecondary);
+            DrawHardwareRow(g, Sf(454f), _settings.T("SYSTEM", "SİSTEM", "系统"), sysVal, sysRight, ColTextSecondary);
         }
 
         private void DrawProfileSegment(Graphics g, RectangleF rect, int hitId, string text, bool active)
         {
             bool hovered = (_hoverHit == hitId);
-            if (active)
-                DrawRoundedCard(g, rect, Sf(5.5f), ColAmberBg, ColAmberBorder);
-            else if (hovered)
-                DrawRoundedCard(g, rect, Sf(5.5f), Color.FromArgb(26, 33, 43), ColDivider);
+            if (active) DrawRoundedCard(g, rect, Sf(5.5f), ColAmberBg, ColAmberBorder);
+            else if (hovered) DrawRoundedCard(g, rect, Sf(5.5f), Color.FromArgb(26, 33, 43), ColDivider);
 
             Color fg = active ? ColAmber : (hovered ? ColTextPrimary : ColTextSecondary);
             using (SolidBrush b = new SolidBrush(fg))
@@ -2473,31 +2378,17 @@ namespace PCUptime
 
         private void DrawButtons(Graphics g)
         {
-            bool tr = _settings.IsTurkish;
+            DrawActionButton(g, _btnCopyRect, HitBtnCopy,
+                _isCopiedState ? _settings.T("Copied", "Kopyalandı", "已复制") : _settings.T("Copy", "Kopyala", "复制摘要"),
+                _isCopiedState, true);
 
-            DrawActionButton(
-                g,
-                _btnCopyRect,
-                HitBtnCopy,
-                _isCopiedState ? (tr ? "Kopyalandı" : "Copied") : (tr ? "Kopyala" : "Copy"),
-                _isCopiedState,
-                true);
+            DrawActionButton(g, _btnPinRect, HitBtnPin,
+                TopMost ? _settings.T("Pinned: On", "Üstte: Açık", "已置顶") : _settings.T("Always On Top", "Üstte Tut", "窗口置顶"),
+                TopMost, false);
 
-            DrawActionButton(
-                g,
-                _btnPinRect,
-                HitBtnPin,
-                TopMost ? (tr ? "Üstte: Açık" : "Pinned: On") : (tr ? "Üstte Tut" : "Always On Top"),
-                TopMost,
-                false);
-
-            DrawActionButton(
-                g,
-                _btnTrayRect,
-                HitBtnTray,
-                tr ? "Tepsiye Al" : "To Tray",
-                false,
-                false);
+            DrawActionButton(g, _btnTrayRect, HitBtnTray,
+                _settings.T("To Tray", "Tepsiye Al", "托盘隐藏"),
+                false, false);
         }
 
         private void DrawActionButton(Graphics g, RectangleF rect, int hitId, string text, bool isHighlighted, bool isSuccessStyle)
@@ -2505,24 +2396,11 @@ namespace PCUptime
             bool hovered = _hoverHit == hitId;
             bool pressed = _pressedHit == hitId;
 
-            Color bg;
-            Color border;
-            Color fg;
-
+            Color bg, border, fg;
             if (isHighlighted)
             {
-                if (isSuccessStyle)
-                {
-                    bg = ColCopiedBg;
-                    border = ColCopiedBorder;
-                    fg = ColAccent;
-                }
-                else
-                {
-                    bg = pressed ? ColBtnPress : (hovered ? ColBtnActiveHover : ColBtnActiveBg);
-                    border = ColBtnActiveBorder;
-                    fg = ColAccentSoft;
-                }
+                if (isSuccessStyle) { bg = ColCopiedBg; border = ColCopiedBorder; fg = ColAccent; }
+                else { bg = pressed ? ColBtnPress : (hovered ? ColBtnActiveHover : ColBtnActiveBg); border = ColBtnActiveBorder; fg = ColAccentSoft; }
             }
             else
             {
@@ -2566,18 +2444,16 @@ namespace PCUptime
                 {
                     if (isCheckmark)
                     {
-                        PointF[] pts = new PointF[]
+                        g.DrawLines(p, new PointF[]
                         {
                             new PointF(r.X + r.Width * 0.14f, r.Y + r.Height * 0.54f),
                             new PointF(r.X + r.Width * 0.42f, r.Y + r.Height * 0.80f),
                             new PointF(r.X + r.Width * 0.88f, r.Y + r.Height * 0.24f)
-                        };
-                        g.DrawLines(p, pts);
+                        });
                     }
                     else
                     {
-                        float w = r.Width * 0.62f;
-                        float h = r.Height * 0.68f;
+                        float w = r.Width * 0.62f, h = r.Height * 0.68f;
                         g.DrawRectangle(p, r.X + r.Width * 0.32f, r.Y + r.Height * 0.08f, w, h);
                         g.DrawRectangle(p, r.X + r.Width * 0.08f, r.Y + r.Height * 0.28f, w, h);
                     }
@@ -2634,7 +2510,6 @@ namespace PCUptime
             float d = radius * 2f;
             if (d > rect.Width) d = rect.Width;
             if (d > rect.Height) d = rect.Height;
-
             path.AddArc(rect.X, rect.Y, d, d, 180f, 90f);
             path.AddArc(rect.Right - d, rect.Y, d, d, 270f, 90f);
             path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0f, 90f);
@@ -2645,24 +2520,10 @@ namespace PCUptime
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
-            if (_tickTimer != null)
-            {
-                _tickTimer.Stop();
-                _tickTimer.Dispose();
-            }
-
-            if (_trayIcon != null)
-            {
-                _trayIcon.Visible = false;
-                _trayIcon.Dispose();
-            }
-
-            if (_trayMenu != null)
-                _trayMenu.Dispose();
-
-            if (_appIcon != null)
-                _appIcon.Dispose();
-
+            if (_tickTimer != null) { _tickTimer.Stop(); _tickTimer.Dispose(); }
+            if (_trayIcon != null) { _trayIcon.Visible = false; _trayIcon.Dispose(); }
+            if (_trayMenu != null) _trayMenu.Dispose();
+            if (_appIcon != null) _appIcon.Dispose();
             DisposeFonts();
             base.OnFormClosed(e);
         }
