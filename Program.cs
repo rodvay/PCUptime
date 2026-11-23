@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("PC Uptime & Power Cost")]
 [assembly: AssemblyDescription("Lightweight Windows utility showing live system uptime, detected hardware specs, and estimated electricity cost (EN/TR/zh-CN).")]
 [assembly: AssemblyProduct("PCUptime")]
-[assembly: AssemblyVersion("1.3.1.0")]
-[assembly: AssemblyFileVersion("1.3.1.0")]
+[assembly: AssemblyVersion("1.3.2.0")]
+[assembly: AssemblyFileVersion("1.3.2.0")]
 
 namespace PCUptime
 {
@@ -367,7 +367,8 @@ namespace PCUptime
                     else if (key == "PricePerKwh")
                     {
                         double p;
-                        if (double.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out p) && p > 0.005 && p < 1000.0)
+                        if (double.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out p) &&
+                            !double.IsNaN(p) && !double.IsInfinity(p) && p > 0.005 && p <= 1000.0)
                             s.PricePerKwh = p;
                     }
                     else if (key == "TariffKey" && !string.IsNullOrEmpty(val))
@@ -553,19 +554,23 @@ namespace PCUptime
             try
             {
                 using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT PCSystemType, TotalPhysicalMemory FROM Win32_ComputerSystem"))
+                using (ManagementObjectCollection col = s.Get())
                 {
-                    foreach (ManagementObject obj in s.Get())
+                    foreach (ManagementObject obj in col)
                     {
-                        object sysTypeObj = obj["PCSystemType"];
-                        if (sysTypeObj != null)
+                        using (obj)
                         {
-                            int sysType = Convert.ToInt32(sysTypeObj);
-                            if (sysType == 2 || sysType == 8 || sysType == 9 || sysType == 10 || sysType == 14)
-                                info.IsLaptop = true;
+                            object sysTypeObj = obj["PCSystemType"];
+                            if (sysTypeObj != null)
+                            {
+                                int sysType = Convert.ToInt32(sysTypeObj);
+                                if (sysType == 2 || sysType == 8 || sysType == 9 || sysType == 10 || sysType == 14)
+                                    info.IsLaptop = true;
+                            }
+                            object ramObj = obj["TotalPhysicalMemory"];
+                            if (ramObj != null)
+                                info.RamGb = Math.Max(1, (int)Math.Round(Convert.ToUInt64(ramObj) / (1024.0 * 1024.0 * 1024.0)));
                         }
-                        object ramObj = obj["TotalPhysicalMemory"];
-                        if (ramObj != null)
-                            info.RamGb = Math.Max(1, (int)Math.Round(Convert.ToUInt64(ramObj) / (1024.0 * 1024.0 * 1024.0)));
                     }
                 }
             }
@@ -578,8 +583,12 @@ namespace PCUptime
                 try
                 {
                     using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT BatteryStatus FROM Win32_Battery"))
+                    using (ManagementObjectCollection col = s.Get())
                     {
-                        foreach (ManagementObject obj in s.Get()) { info.IsLaptop = true; break; }
+                        foreach (ManagementObject obj in col)
+                        {
+                            using (obj) { info.IsLaptop = true; break; }
+                        }
                     }
                 }
                 catch
@@ -592,12 +601,16 @@ namespace PCUptime
                 int mods = 0;
                 ulong sumBytes = 0;
                 using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT Capacity FROM Win32_PhysicalMemory"))
+                using (ManagementObjectCollection col = s.Get())
                 {
-                    foreach (ManagementObject obj in s.Get())
+                    foreach (ManagementObject obj in col)
                     {
-                        mods++;
-                        if (obj["Capacity"] != null)
-                            sumBytes += Convert.ToUInt64(obj["Capacity"]);
+                        using (obj)
+                        {
+                            mods++;
+                            if (obj["Capacity"] != null)
+                                sumBytes += Convert.ToUInt64(obj["Capacity"]);
+                        }
                     }
                 }
                 info.RamModules = mods;
@@ -614,13 +627,17 @@ namespace PCUptime
             try
             {
                 using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT Name, NumberOfCores FROM Win32_Processor"))
+                using (ManagementObjectCollection col = s.Get())
                 {
-                    foreach (ManagementObject obj in s.Get())
+                    foreach (ManagementObject obj in col)
                     {
-                        string rawName = obj["Name"] != null ? obj["Name"].ToString() : "Unknown CPU";
-                        info.CpuName = CleanCpuName(rawName);
-                        if (obj["NumberOfCores"] != null)
-                            info.CpuCores += Convert.ToInt32(obj["NumberOfCores"]);
+                        using (obj)
+                        {
+                            string rawName = obj["Name"] != null ? obj["Name"].ToString() : "Unknown CPU";
+                            info.CpuName = CleanCpuName(rawName);
+                            if (obj["NumberOfCores"] != null)
+                                info.CpuCores += Convert.ToInt32(obj["NumberOfCores"]);
+                        }
                     }
                 }
             }
@@ -638,13 +655,17 @@ namespace PCUptime
             try
             {
                 using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT Name FROM Win32_VideoController"))
+                using (ManagementObjectCollection col = s.Get())
                 {
-                    foreach (ManagementObject obj in s.Get())
+                    foreach (ManagementObject obj in col)
                     {
-                        string gName = obj["Name"] != null ? obj["Name"].ToString().Trim() : "";
-                        if (string.IsNullOrEmpty(gName) || IsVirtualDisplayAdapter(gName))
-                            continue;
-                        gpus.Add(CleanGpuName(gName));
+                        using (obj)
+                        {
+                            string gName = obj["Name"] != null ? obj["Name"].ToString().Trim() : "";
+                            if (string.IsNullOrEmpty(gName) || IsVirtualDisplayAdapter(gName))
+                                continue;
+                            gpus.Add(CleanGpuName(gName));
+                        }
                     }
                 }
             }
@@ -681,27 +702,61 @@ namespace PCUptime
                 info.GpuTdpWatts = bestTdp;
             }
 
+            // Primary: accurate Windows Storage WMI (MSFT_PhysicalDisk MediaType: 3=HDD, 4=SSD, 5=SCM)
+            bool storageDetected = false;
             try
             {
-                using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT Model, MediaType, InterfaceType FROM Win32_DiskDrive"))
+                using (ManagementObjectSearcher s = new ManagementObjectSearcher(@"root\Microsoft\Windows\Storage", "SELECT MediaType, BusType FROM MSFT_PhysicalDisk"))
+                using (ManagementObjectCollection col = s.Get())
                 {
-                    foreach (ManagementObject obj in s.Get())
+                    foreach (ManagementObject obj in col)
                     {
-                        string iface = obj["InterfaceType"] != null ? obj["InterfaceType"].ToString().ToUpperInvariant() : "";
-                        string media = obj["MediaType"] != null ? obj["MediaType"].ToString().ToUpperInvariant() : "";
-                        if (iface.Contains("USB") || media.Contains("REMOVABLE") || media.Contains("EXTERNAL"))
-                            continue;
-
-                        string model = obj["Model"] != null ? obj["Model"].ToString().ToUpperInvariant() : "";
-                        if (model.Contains("SSD") || model.Contains("NVME") || model.Contains("M.2") || model.Contains("SOLID"))
-                            info.SsdCount++;
-                        else
-                            info.HddCount++;
+                        using (obj)
+                        {
+                            int bus = obj["BusType"] != null ? Convert.ToInt32(obj["BusType"]) : 0;
+                            if (bus == 7) continue; // Skip USB removable disks
+                            int media = obj["MediaType"] != null ? Convert.ToInt32(obj["MediaType"]) : 0;
+                            if (media == 4 || media == 5) { info.SsdCount++; storageDetected = true; }
+                            else if (media == 3) { info.HddCount++; storageDetected = true; }
+                        }
                     }
                 }
             }
             catch
             {
+            }
+
+            // Fallback: Win32_DiskDrive model heuristics if Storage WMI is unavailable
+            if (!storageDetected)
+            {
+                try
+                {
+                    using (ManagementObjectSearcher s = new ManagementObjectSearcher("SELECT Model, MediaType, InterfaceType FROM Win32_DiskDrive"))
+                    using (ManagementObjectCollection col = s.Get())
+                    {
+                        foreach (ManagementObject obj in col)
+                        {
+                            using (obj)
+                            {
+                                string iface = obj["InterfaceType"] != null ? obj["InterfaceType"].ToString().ToUpperInvariant() : "";
+                                string media = obj["MediaType"] != null ? obj["MediaType"].ToString().ToUpperInvariant() : "";
+                                if (iface.Contains("USB") || media.Contains("REMOVABLE") || media.Contains("EXTERNAL"))
+                                    continue;
+
+                                string model = obj["Model"] != null ? obj["Model"].ToString().ToUpperInvariant() : "";
+                                if (model.Contains("SSD") || model.Contains("NVME") || model.Contains("M.2") || model.Contains("SOLID") ||
+                                    model.Contains("EVO") || model.Contains("PRO") || model.Contains("SN5") || model.Contains("SN7") ||
+                                    model.Contains("SN8") || model.Contains("KC3000") || model.Contains("KIOXIA") || model.Contains("SOLIDIGM"))
+                                    info.SsdCount++;
+                                else
+                                    info.HddCount++;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                }
             }
 
             if (info.SsdCount == 0 && info.HddCount == 0)
@@ -1188,7 +1243,7 @@ namespace PCUptime
             bool okPrice = double.TryParse(rawPrice, NumberStyles.Float, _culture, out parsedPrice) ||
                            double.TryParse(rawPrice.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out parsedPrice);
 
-            if (!okPrice || parsedPrice <= 0.005 || parsedPrice > 1000.0)
+            if (!okPrice || double.IsNaN(parsedPrice) || double.IsInfinity(parsedPrice) || parsedPrice <= 0.005 || parsedPrice > 1000.0)
             {
                 _lblError.Text = _s.T("Please enter a valid kWh rate (e.g. 0.55).", "Lütfen geçerli bir kWh fiyatı girin (ör. 4,05).", "请输入有效的电价 (例如 0.55)。");
                 return;
