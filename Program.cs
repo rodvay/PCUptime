@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("PC Uptime & Power Cost")]
 [assembly: AssemblyDescription("Lightweight Windows utility showing live system uptime, detected hardware specs, and estimated electricity cost (EN/TR/zh-CN).")]
 [assembly: AssemblyProduct("PCUptime")]
-[assembly: AssemblyVersion("1.3.2.0")]
-[assembly: AssemblyFileVersion("1.3.2.0")]
+[assembly: AssemblyVersion("1.3.3.0")]
+[assembly: AssemblyFileVersion("1.3.3.0")]
 
 namespace PCUptime
 {
@@ -1509,10 +1509,11 @@ namespace PCUptime
                 HardwareInfo detected = HardwareDetector.Detect(monitorCount);
                 try
                 {
-                    if (!IsDisposed && IsHandleCreated)
+                    if (!IsDisposed && !Disposing && IsHandleCreated)
                     {
                         BeginInvoke((MethodInvoker)delegate
                         {
+                            if (IsDisposed || Disposing) return;
                             _hardware = detected;
                             UpdateTrayTooltip();
                             Invalidate();
